@@ -950,16 +950,8 @@ class TerrainGenerator:
         for name, mesh in scene.geometry.items():
             print(f"  {name}: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
         
-        # Convert to exportable format
-        export_scene = trimesh.exchange.gltf.export_gltf(scene)
-        
-        # Convert back to trimesh.Scene
-        reconverted_scene = trimesh.exchange.gltf.load_gltf(
-            file_obj=trimesh.util.wrap_as_stream(export_scene),
-            merge_primitives=False
-        )
-        
-        return reconverted_scene
+        # Return the scene object directly
+        return scene
 
     def _generate_debug_visualizations(self, elevation_data, bounds, output_prefix):
         """
