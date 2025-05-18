@@ -55,6 +55,7 @@ topo/
 *.glb
 *.obj
 *.png
+*.jpg
 *.stl
 output/
 data/
