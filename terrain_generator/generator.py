@@ -527,15 +527,20 @@ class TerrainGenerator:
         except Exception as e:
             raise ValueError(f"Error exporting to GLB: {str(e)}")
 
-    def generate_bay_area_terrain(self, bounds=(-123.0, 36.9, -121.7, 38.1), topo_dir="topo", detail_level=0.2, output_prefix="bay_area"):
+    def generate_terrain(self, bounds, topo_dir="topo", detail_level=0.2, output_prefix="terrain",
+                       water_level=-15.0, shore_height=1.0, shore_buffer=1, height_scale=0.05):
         """
-        Generate San Francisco Bay Area terrain model using SRTM data with proper north-up orientation.
+        Generate terrain model using SRTM data with proper north-up orientation.
         
         Args:
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
             topo_dir (str): Directory containing SRTM data files
             detail_level (float): Detail level (1.0 = highest detail, lower values reduce detail)
             output_prefix (str): Prefix for output files
+            water_level (float): Elevation value for water areas (typically negative)
+            shore_height (float): Elevation value for shore areas
+            shore_buffer (int): Number of cells for shore buffer
+            height_scale (float): Scale factor for height relative to horizontal dimensions
             
         Returns:
             trimesh.Trimesh: The generated terrain mesh
@@ -557,7 +562,15 @@ class TerrainGenerator:
         elevation_data = self._stitch_srtm_tiles(tile_files)
         
         # Create the terrain model
-        mesh = self._create_terrain_model_from_elevation(elevation_data, bounds, detail_level)
+        mesh = self._create_terrain_model_from_elevation(
+            elevation_data, 
+            bounds, 
+            detail_level, 
+            water_level, 
+            shore_height, 
+            shore_buffer,
+            height_scale
+        )
         
         # Export the model
         output_path = f"{output_prefix}_{detail_level:.3f}.glb"
@@ -571,8 +584,6 @@ class TerrainGenerator:
         
         Args:
             tile_files (dict): Dictionary mapping (lat, lon) to file paths
-            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
-            output_prefix (str): Prefix for visualization output file
             
         Returns:
             numpy.ndarray: Combined elevation data with proper orientation
@@ -585,7 +596,7 @@ class TerrainGenerator:
             # Read the raw elevation data
             elevation_data, _ = self.read_hgt_file(file_path)
             
-            # Store the data without flipping individual tiles
+            # Store the data and coordinates
             tile_data[(lat, lon)] = {
                 'data': elevation_data,
                 'north': lat,
@@ -594,23 +605,33 @@ class TerrainGenerator:
                 'east': lon + 1
             }
         
+        # Find the dimensions of the tile grid
+        all_lats = set(lat for lat, _ in tile_data.keys())
+        all_lons = set(lon for _, lon in tile_data.keys())
+        
+        min_lat, max_lat = min(all_lats), max(all_lats)
+        min_lon, max_lon = min(all_lons), max(all_lons)
+        
+        # Calculate grid dimensions
+        lat_range = max_lat - min_lat + 1
+        lon_range = max_lon - min_lon + 1
+        
         # Find our tile dimensions
         sample_data = next(iter(tile_data.values()))['data']
         tile_height, tile_width = sample_data.shape
         
-        # Initialize the merged grid (2x2 tiles)
-        merged_height = tile_height * 2  # 2 tiles vertically
-        merged_width = tile_width * 2    # 2 tiles horizontally
+        # Initialize the merged grid
+        merged_height = tile_height * lat_range
+        merged_width = tile_width * lon_range
         merged_data = np.zeros((merged_height, merged_width), dtype=np.float32)
         
         # Place each tile in its correct position
-        # Use the standard SRTM arrangement: N38 above N37, W123 left of W122
         for (lat, lon), info in tile_data.items():
             # Calculate row and column in the grid
-            # N38 goes in row 0 (top), N37 in row 1 (bottom)
-            row = 0 if lat == 38 else 1
-            # W123 goes in column 0 (left), W122 in column 1 (right)
-            col = 0 if lon == -123 else 1
+            # Higher latitudes go at the top (row 0)
+            row = max_lat - lat
+            # Higher longitudes go to the right
+            col = lon - min_lon
             
             print(f"  Placing tile N{lat}W{-lon} at position ({row}, {col})")
             
@@ -628,7 +649,9 @@ class TerrainGenerator:
         
         return merged_data
     
-    def _create_terrain_model_from_elevation(self, elevation_data, bounds, detail_level=0.2):
+    def _create_terrain_model_from_elevation(self, elevation_data, bounds, detail_level=0.2,
+                                           water_level=-15.0, shore_height=1.0, shore_buffer=1,
+                                           height_scale=0.05):
         """
         Create a 3D terrain model from elevation data.
         
@@ -636,6 +659,10 @@ class TerrainGenerator:
             elevation_data (numpy.ndarray): 2D array of elevation values
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) of the region
             detail_level (float): Detail level (1.0 = highest detail, lower values reduce detail)
+            water_level (float): Elevation value for water areas (typically negative)
+            shore_height (float): Elevation value for shore areas
+            shore_buffer (int): Number of cells for shore buffer
+            height_scale (float): Scale factor for height relative to horizontal dimensions
             
         Returns:
             trimesh.Trimesh: The generated terrain mesh
@@ -647,15 +674,10 @@ class TerrainGenerator:
         print(f"Water coverage: {water_coverage:.1f}% of region")
         
         # Make water areas distinctly lower for better visualization
-        water_level = -15.0
         elevation_data_with_water = elevation_data.copy()
         elevation_data_with_water[water_mask] = water_level
         
         # Create distinct shores
-        shore_buffer = 1  # cells
-        shore_height = 1.0  # meters
-        
-        # Create a shore mask by dilating water areas slightly
         shore_mask = binary_dilation(water_mask, iterations=shore_buffer) & ~water_mask
         elevation_data_with_water[shore_mask] = shore_height
         
@@ -721,8 +743,8 @@ class TerrainGenerator:
         vertices[:, 0] = (vertices[:, 0] - min_x) * xy_scale
         vertices[:, 1] = (vertices[:, 1] - min_y) * xy_scale
 
-        # Scale the height to some proportion of the width
-        vertices[:, 2] = vertices[:, 2] / max(vertices[:, 2]) * 0.05
+        # Scale the height to some proportion of the width using the height_scale parameter
+        vertices[:, 2] = vertices[:, 2] / max(vertices[:, 2]) * height_scale
         
         # Create mesh faces
         faces = []
