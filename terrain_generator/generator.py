@@ -507,12 +507,12 @@ class TerrainGenerator:
         
         return mesh
     
-    def export_glb(self, mesh, output_path):
+    def export_glb(self, scene, output_path):
         """
-        Export mesh to .glb format.
+        Export scene to .glb format.
         
         Args:
-            mesh (trimesh.Trimesh): The mesh to export
+            scene (trimesh.Scene): The scene to export
             output_path (str): Path for the output .glb file
             
         Raises:
@@ -522,8 +522,9 @@ class TerrainGenerator:
             # Create the export directory if it doesn't exist
             os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
             
-            # Export the mesh
-            mesh.export(output_path, file_type='glb')
+            # Export the scene
+            scene.export(output_path, file_type='glb')
+            print(f"Model exported to {output_path}")
         except Exception as e:
             raise ValueError(f"Error exporting to GLB: {str(e)}")
 
@@ -734,8 +735,8 @@ class TerrainGenerator:
         resampled_data = zoom(elevation_data_with_water, (zoom_y, zoom_x), order=1)
         
         # Re-apply water mask after resampling to maintain clear water boundaries
-        resampled_water = resampled_data <= 0
-        resampled_data[resampled_water] = water_level
+        resampled_water_mask = resampled_data <= 0
+        resampled_data[resampled_water_mask] = water_level
         
         # Create vertices array
         vertices = np.column_stack((
@@ -752,8 +753,16 @@ class TerrainGenerator:
         # Scale the height to some proportion of the width using the height_scale parameter
         vertices[:, 2] = vertices[:, 2] / max(vertices[:, 2]) * height_scale
         
-        # Create mesh faces
-        faces = []
+        # Create separate masks for water and land
+        vertex_count = rows * cols
+        resampled_water_mask_flat = resampled_water_mask.flatten()
+        
+        # ----- Create separate meshes for water and land -----
+        
+        # Create faces for both water and land
+        water_faces = []
+        land_faces = []
+        
         for i in tqdm(range(rows - 1), desc="Creating surface triangles"):
             for j in range(cols - 1):
                 v0 = i * cols + j
@@ -761,40 +770,75 @@ class TerrainGenerator:
                 v2 = (i + 1) * cols + j
                 v3 = v2 + 1
                 
-                # Correct winding order for proper rendering
-                faces.extend([
-                    [v0, v1, v2],
-                    [v1, v3, v2]
-                ])
+                # Check if this quad is entirely water or entirely land
+                is_water_quad = (
+                    resampled_water_mask_flat[v0] and 
+                    resampled_water_mask_flat[v1] and 
+                    resampled_water_mask_flat[v2] and 
+                    resampled_water_mask_flat[v3]
+                )
+                
+                is_land_quad = (
+                    not resampled_water_mask_flat[v0] and 
+                    not resampled_water_mask_flat[v1] and 
+                    not resampled_water_mask_flat[v2] and 
+                    not resampled_water_mask_flat[v3]
+                )
+                
+                # If it's a mixed quad (part water, part land), we need to make a decision
+                # For simplicity, we'll assign it to land if at least 3 vertices are land
+                if not is_water_quad and not is_land_quad:
+                    land_count = (
+                        (not resampled_water_mask_flat[v0]) + 
+                        (not resampled_water_mask_flat[v1]) + 
+                        (not resampled_water_mask_flat[v2]) + 
+                        (not resampled_water_mask_flat[v3])
+                    )
+                    is_land_quad = land_count >= 3
+                    is_water_quad = not is_land_quad
+                
+                if is_water_quad:
+                    water_faces.extend([
+                        [v0, v1, v2],
+                        [v1, v3, v2]
+                    ])
+                else:
+                    land_faces.extend([
+                        [v0, v1, v2],
+                        [v1, v3, v2]
+                    ])
         
-        # Create base and sides
+        # Create base and side walls (only for land)
         base_vertices = vertices.copy()
         min_z = vertices[:, 2].min()
         base_vertices[:, 2] = min_z - 0.01
         
         # Combine vertices
         all_vertices = np.vstack([vertices, base_vertices])
-        vertex_count = rows * cols
         
-        # Add side walls
+        # Add side walls for the land mesh
         for j in tqdm(range(cols - 1), desc="Creating walls"):
             # Front edge (i=0)
             v0, v1 = j, j+1
             v0_base, v1_base = v0 + vertex_count, v1 + vertex_count
-            faces.extend([
-                [v0, v1, v0_base],
-                [v1, v1_base, v0_base]
-            ])
+            
+            if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                land_faces.extend([
+                    [v0, v1, v0_base],
+                    [v1, v1_base, v0_base]
+                ])
             
             # Back edge (i=rows-1)
             v0 = (rows - 1) * cols + j
             v1 = v0 + 1
             v0_base = v0 + vertex_count
             v1_base = v1 + vertex_count
-            faces.extend([
-                [v0, v1, v0_base],
-                [v1, v1_base, v0_base]
-            ])
+            
+            if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                land_faces.extend([
+                    [v0, v1, v0_base],
+                    [v1, v1_base, v0_base]
+                ])
         
         for i in range(rows - 1):
             # Left edge (j=0)
@@ -802,61 +846,118 @@ class TerrainGenerator:
             v1 = (i + 1) * cols
             v0_base = v0 + vertex_count
             v1_base = v1 + vertex_count
-            faces.extend([
-                [v0, v1, v0_base],
-                [v1, v1_base, v0_base]
-            ])
+            
+            if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                land_faces.extend([
+                    [v0, v1, v0_base],
+                    [v1, v1_base, v0_base]
+                ])
             
             # Right edge (j=cols-1)
             v0 = i * cols + (cols - 1)
             v1 = (i + 1) * cols + (cols - 1)
             v0_base = v0 + vertex_count
             v1_base = v1 + vertex_count
-            faces.extend([
-                [v0, v1, v0_base],
-                [v1, v1_base, v0_base]
-            ])
+            
+            if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                land_faces.extend([
+                    [v0, v1, v0_base],
+                    [v1, v1_base, v0_base]
+                ])
         
-        # Add base face triangles
+        # Add base face triangles for land
         for i in range(rows - 1):
             for j in range(cols - 1):
                 v0 = i * cols + j + vertex_count
                 v1 = v0 + 1
                 v2 = (i + 1) * cols + j + vertex_count
                 v3 = v2 + 1
-                faces.extend([
-                    [v0, v1, v2],
-                    [v1, v3, v2]
-                ])
+                
+                v0_orig = v0 - vertex_count
+                v1_orig = v1 - vertex_count
+                v2_orig = v2 - vertex_count
+                v3_orig = v3 - vertex_count
+                
+                if (not resampled_water_mask_flat[v0_orig] and 
+                    not resampled_water_mask_flat[v1_orig] and 
+                    not resampled_water_mask_flat[v2_orig] and 
+                    not resampled_water_mask_flat[v3_orig]):
+                    land_faces.extend([
+                        [v0, v2, v1],
+                        [v1, v2, v3]
+                    ])
         
-        # Create mesh
-        faces = np.array(faces)
-        mesh = trimesh.Trimesh(vertices=all_vertices, faces=faces)
+        # Convert face lists to numpy arrays
+        water_faces_array = np.array(water_faces) if water_faces else np.empty((0, 3), dtype=np.int64)
+        land_faces_array = np.array(land_faces) if land_faces else np.empty((0, 3), dtype=np.int64)
         
-        # Fix normals for proper rendering
-        mesh.fix_normals()
+        # Create separate meshes for water and land
+        print("Creating water and land meshes...")
+        water_mesh = None
+        land_mesh = None
         
-        # Center the mesh
-        center = mesh.bounds.mean(axis=0)
-        mesh.vertices -= center
+        if len(water_faces) > 0:
+            # Create water mesh with dark blue material
+            water_mesh = trimesh.Trimesh(
+                vertices=vertices,
+                faces=water_faces_array,
+                face_colors=[0, 0, 128, 255]  # Dark blue color with alpha
+            )
         
-        # Scale to 1 meter length
-        scale_factor = 1.0 / max(mesh.extents)
-        mesh.apply_scale(scale_factor)
-
-        # Print dimensions of the mesh
-        print(f"Mesh dimensions: {mesh.bounds}")
+        if len(land_faces) > 0:
+            # Create land mesh with light gray material
+            land_mesh = trimesh.Trimesh(
+                vertices=all_vertices, 
+                faces=land_faces_array,
+                face_colors=[200, 200, 200, 255]  # Light gray color with alpha
+            )
         
-        # Ensure proper orientation (Z-up) for Unity/other 3D software
-        # This rotates the model to have Z axis pointing up instead of Y axis
+        # Combine the meshes into a scene
+        scene = trimesh.Scene()
+        
+        if water_mesh is not None:
+            scene.add_geometry(water_mesh, geom_name="water")
+        
+        if land_mesh is not None:
+            scene.add_geometry(land_mesh, geom_name="land")
+        
+        # Fix normals on all meshes
+        for mesh in scene.geometry.values():
+            mesh.fix_normals()
+        
+        # Center the scene
+        scene.centroid = [0, 0, 0]
+        
+        # Scale to a standard size
+        scale_factor = 1.0 / max(scene.extents)
+        for mesh in scene.geometry.values():
+            mesh.apply_scale(scale_factor)
+        
+        # Ensure proper orientation (Z-up)
         rotation = trimesh.transformations.rotation_matrix(
             angle=-np.pi/2,
             direction=[1, 0, 0],
             point=[0, 0, 0]
         )
-        mesh.apply_transform(rotation)
         
-        return mesh
+        for mesh in scene.geometry.values():
+            mesh.apply_transform(rotation)
+        
+        # Print mesh information
+        print(f"Terrain model created with {len(scene.geometry)} geometries")
+        for name, mesh in scene.geometry.items():
+            print(f"  {name}: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+        
+        # Convert to exportable format
+        export_scene = trimesh.exchange.gltf.export_gltf(scene)
+        
+        # Convert back to trimesh.Scene
+        reconverted_scene = trimesh.exchange.gltf.load_gltf(
+            file_obj=trimesh.util.wrap_as_stream(export_scene),
+            merge_primitives=False
+        )
+        
+        return reconverted_scene
 
     def _generate_debug_visualizations(self, elevation_data, bounds, output_prefix):
         """
