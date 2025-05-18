@@ -11,6 +11,10 @@ import re  # Add this for regex pattern matching
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from scipy.ndimage import binary_dilation, zoom
+import concurrent.futures
+import multiprocessing
+from functools import partial
+import time
 
 class TerrainGenerator:
     def __init__(self):
@@ -88,63 +92,33 @@ class TerrainGenerator:
                         zip_ref.extract(hgt_files[0], tmpdir)
                         hgt_file_path = os.path.join(tmpdir, hgt_files[0])
                         
-                        # Open the dataset with GDAL
-                        ds = gdal.Open(hgt_file_path)
-                        if ds is None:
-                            raise ValueError("Failed to open the dataset")
+                        # Use rasterio for faster reading
+                        with rasterio.open(hgt_file_path) as ds:
+                            # Read the data
+                            elevation_data = ds.read(1)
                             
-                        # Get geotransform (affine transformation coefficients)
-                        geotransform = ds.GetGeoTransform()
-                        pixel_size = abs(geotransform[1])  # size of pixel in degrees
-                        
-                        # Read elevation data
-                        band = ds.GetRasterBand(1)
-                        elevation_data = band.ReadAsArray()
-                        
-                        # Handle no-data values
-                        no_data = band.GetNoDataValue()
-                        if no_data is not None:
-                            elevation_data = np.where(elevation_data == no_data, 0, elevation_data)
-                        
-                        ds = None  # Close the dataset
-                        return elevation_data, pixel_size
+                            # Get pixel size
+                            pixel_size = abs(ds.transform[0])
+                            
+                            # Handle no-data values
+                            if ds.nodata is not None:
+                                elevation_data = np.where(elevation_data == ds.nodata, 0, elevation_data)
+                            
+                            return elevation_data, pixel_size
             else:
                 # Handle non-zipped .hgt files
-                ds = gdal.Open(hgt_path)
-                if ds is None:
-                    raise ValueError("Failed to open the dataset")
+                with rasterio.open(hgt_path) as ds:
+                    # Read the data
+                    elevation_data = ds.read(1)
                     
-                # Get geotransform (affine transformation coefficients)
-                geotransform = ds.GetGeoTransform()
-                pixel_size = abs(geotransform[1])  # size of pixel in degrees
-                
-                # Read elevation data
-                band = ds.GetRasterBand(1)
-                elevation_data = band.ReadAsArray()
-                
-                # Handle no-data values
-                no_data = band.GetNoDataValue()
-                if no_data is not None:
-                    elevation_data = np.where(elevation_data == no_data, 0, elevation_data)
-                
-                ds = None  # Close the dataset
-                return elevation_data, pixel_size
-            
-            # Get geotransform (affine transformation coefficients)
-            geotransform = ds.GetGeoTransform()
-            pixel_size = geotransform[1]  # size of pixel in degrees
-            
-            # Read elevation data
-            band = ds.GetRasterBand(1)
-            elevation_data = band.ReadAsArray()
-            
-            # Handle no-data values
-            no_data = band.GetNoDataValue()
-            if no_data is not None:
-                elevation_data = np.where(elevation_data == no_data, 0, elevation_data)
-            
-            ds = None  # Close the dataset
-            return elevation_data, pixel_size
+                    # Get pixel size
+                    pixel_size = abs(ds.transform[0])
+                    
+                    # Handle no-data values
+                    if ds.nodata is not None:
+                        elevation_data = np.where(elevation_data == ds.nodata, 0, elevation_data)
+                    
+                    return elevation_data, pixel_size
         except Exception as e:
             raise ValueError(f"Error reading HGT file: {str(e)}")
 
@@ -548,6 +522,7 @@ class TerrainGenerator:
         Returns:
             trimesh.Trimesh: The generated terrain mesh
         """
+        total_start_time = time.time()
         print(f"Generating terrain model for bounds: {bounds}")
         
         # Find required tiles
@@ -564,12 +539,13 @@ class TerrainGenerator:
         # Stitch the tiles with standard SRTM arrangement
         elevation_data = self._stitch_srtm_tiles(tile_files)
         
-        # Create debug visualizations if requested
+        # Create debug visualizations if requested (in parallel if debug mode is on)
         if debug:
-            self._generate_debug_visualizations(elevation_data, bounds, output_prefix)
+            debug_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            debug_future = debug_executor.submit(self._generate_debug_visualizations, elevation_data, bounds, output_prefix)
         
         # Create the terrain model
-        mesh = self._create_terrain_model_from_elevation(
+        scene = self._create_terrain_model_from_elevation(
             elevation_data, 
             bounds, 
             detail_level, 
@@ -579,15 +555,23 @@ class TerrainGenerator:
             height_scale
         )
         
+        # Wait for debug visualizations to complete if they were requested
+        if debug:
+            debug_future.result()
+            debug_executor.shutdown()
+        
         # Export the model
         output_path = f"{output_prefix}_{detail_level:.3f}.glb"
-        self.export_glb(mesh, output_path)
+        self.export_glb(scene, output_path)
         
-        return mesh
+        # Final performance report
+        print(f"Total terrain generation pipeline time: {time.time() - total_start_time:.2f} seconds")
+        
+        return scene
     
     def _stitch_srtm_tiles(self, tile_files):
         """
-        Stitch SRTM tiles with proper north-up orientation.
+        Stitch SRTM tiles with proper north-up orientation using parallel processing.
         
         Args:
             tile_files (dict): Dictionary mapping (lat, lon) to file paths
@@ -595,22 +579,29 @@ class TerrainGenerator:
         Returns:
             numpy.ndarray: Combined elevation data with proper orientation
         """
-        print("Reading and arranging SRTM tiles...")
-        tile_data = {}
+        print("Reading and arranging SRTM tiles in parallel...")
         
-        # Read all tiles
-        for (lat, lon), file_path in tile_files.items():
-            # Read the raw elevation data
+        # Function to read a single tile
+        def read_tile(coords_path):
+            coords, file_path = coords_path
             elevation_data, _ = self.read_hgt_file(file_path)
-            
-            # Store the data and coordinates
-            tile_data[(lat, lon)] = {
+            return coords, {
                 'data': elevation_data,
-                'north': lat,
-                'south': lat - 1,
-                'west': lon,
-                'east': lon + 1
+                'north': coords[0],
+                'south': coords[0] - 1,
+                'west': coords[1],
+                'east': coords[1] + 1
             }
+        
+        # Use a process pool to read tiles in parallel
+        start_time = time.time()
+        num_cores = multiprocessing.cpu_count()
+        with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
+            results = list(executor.map(read_tile, tile_files.items()))
+        
+        # Convert results to a dictionary
+        tile_data = {coords: info for coords, info in results}
+        print(f"Tile reading completed in {time.time() - start_time:.2f} seconds using {num_cores} cores")
         
         # Find the dimensions of the tile grid
         all_lats = set(lat for lat, _ in tile_data.keys())
@@ -660,7 +651,7 @@ class TerrainGenerator:
                                            water_level=-15.0, shore_height=1.0, shore_buffer=1,
                                            height_scale=0.05):
         """
-        Create a 3D terrain model from elevation data.
+        Create a 3D terrain model from elevation data using parallel processing.
         
         Args:
             elevation_data (numpy.ndarray): 2D array of elevation values
@@ -672,8 +663,11 @@ class TerrainGenerator:
             height_scale (float): Scale factor for height relative to horizontal dimensions
             
         Returns:
-            trimesh.Trimesh: The generated terrain mesh
+            trimesh.Scene: The generated terrain scene with water and land as separate meshes
         """
+        start_time = time.time()
+        print("Starting terrain model creation...")
+        
         # Create a pronounced water mask (elevation <= 0 is water)
         water_mask = elevation_data <= 0
         water_coverage = water_mask.sum() / water_mask.size * 100
@@ -732,18 +726,24 @@ class TerrainGenerator:
         zoom_x = cols / elev_cols
         
         # Use order=1 for linear interpolation to maintain water boundaries
+        print("Resampling elevation data...")
+        resampling_start = time.time()
         resampled_data = zoom(elevation_data_with_water, (zoom_y, zoom_x), order=1)
+        print(f"Resampling completed in {time.time() - resampling_start:.2f} seconds")
         
         # Re-apply water mask after resampling to maintain clear water boundaries
         resampled_water_mask = resampled_data <= 0
         resampled_data[resampled_water_mask] = water_level
         
         # Create vertices array
+        print("Creating vertex array...")
+        vertex_start = time.time()
         vertices = np.column_stack((
             x_grid.flatten(),
             y_grid.flatten(),
             resampled_data.flatten()
         ))
+        print(f"Vertex array created in {time.time() - vertex_start:.2f} seconds")
         
         # Normalize XY coordinates while preserving aspect ratio
         xy_scale = 1.0 / max(width_m, height_m)
@@ -757,58 +757,97 @@ class TerrainGenerator:
         vertex_count = rows * cols
         resampled_water_mask_flat = resampled_water_mask.flatten()
         
-        # ----- Create separate meshes for water and land -----
+        # ----- Create separate meshes for water and land using parallel processing -----
+        print("Generating terrain faces in parallel...")
         
-        # Create faces for both water and land
+        # Function to create faces for a chunk of rows
+        def create_faces_for_chunk(start_row, end_row, cols, resampled_water_mask_flat):
+            water_faces = []
+            land_faces = []
+            
+            for i in range(start_row, end_row):
+                for j in range(cols - 1):
+                    v0 = i * cols + j
+                    v1 = v0 + 1
+                    v2 = (i + 1) * cols + j
+                    v3 = v2 + 1
+                    
+                    # Skip if we're at the last row
+                    if i >= rows - 1:
+                        continue
+                    
+                    # Check if this quad is entirely water or entirely land
+                    is_water_quad = (
+                        resampled_water_mask_flat[v0] and 
+                        resampled_water_mask_flat[v1] and 
+                        resampled_water_mask_flat[v2] and 
+                        resampled_water_mask_flat[v3]
+                    )
+                    
+                    is_land_quad = (
+                        not resampled_water_mask_flat[v0] and 
+                        not resampled_water_mask_flat[v1] and 
+                        not resampled_water_mask_flat[v2] and 
+                        not resampled_water_mask_flat[v3]
+                    )
+                    
+                    # If it's a mixed quad (part water, part land), we need to make a decision
+                    # For simplicity, we'll assign it to land if at least 3 vertices are land
+                    if not is_water_quad and not is_land_quad:
+                        land_count = (
+                            (not resampled_water_mask_flat[v0]) + 
+                            (not resampled_water_mask_flat[v1]) + 
+                            (not resampled_water_mask_flat[v2]) + 
+                            (not resampled_water_mask_flat[v3])
+                        )
+                        is_land_quad = land_count >= 3
+                        is_water_quad = not is_land_quad
+                    
+                    if is_water_quad:
+                        water_faces.extend([
+                            [v0, v1, v2],
+                            [v1, v3, v2]
+                        ])
+                    else:
+                        land_faces.extend([
+                            [v0, v1, v2],
+                            [v1, v3, v2]
+                        ])
+                        
+            return water_faces, land_faces
+        
+        # Split the work into chunks based on available CPU cores
+        num_cores = multiprocessing.cpu_count()
+        chunk_size = max(1, (rows - 1) // num_cores)
+        chunks = [(i, min(i + chunk_size, rows - 1)) for i in range(0, rows - 1, chunk_size)]
+        
+        # Use ProcessPoolExecutor for parallel face creation
+        faces_start = time.time()
         water_faces = []
         land_faces = []
         
-        for i in tqdm(range(rows - 1), desc="Creating surface triangles"):
-            for j in range(cols - 1):
-                v0 = i * cols + j
-                v1 = v0 + 1
-                v2 = (i + 1) * cols + j
-                v3 = v2 + 1
-                
-                # Check if this quad is entirely water or entirely land
-                is_water_quad = (
-                    resampled_water_mask_flat[v0] and 
-                    resampled_water_mask_flat[v1] and 
-                    resampled_water_mask_flat[v2] and 
-                    resampled_water_mask_flat[v3]
-                )
-                
-                is_land_quad = (
-                    not resampled_water_mask_flat[v0] and 
-                    not resampled_water_mask_flat[v1] and 
-                    not resampled_water_mask_flat[v2] and 
-                    not resampled_water_mask_flat[v3]
-                )
-                
-                # If it's a mixed quad (part water, part land), we need to make a decision
-                # For simplicity, we'll assign it to land if at least 3 vertices are land
-                if not is_water_quad and not is_land_quad:
-                    land_count = (
-                        (not resampled_water_mask_flat[v0]) + 
-                        (not resampled_water_mask_flat[v1]) + 
-                        (not resampled_water_mask_flat[v2]) + 
-                        (not resampled_water_mask_flat[v3])
-                    )
-                    is_land_quad = land_count >= 3
-                    is_water_quad = not is_land_quad
-                
-                if is_water_quad:
-                    water_faces.extend([
-                        [v0, v1, v2],
-                        [v1, v3, v2]
-                    ])
-                else:
-                    land_faces.extend([
-                        [v0, v1, v2],
-                        [v1, v3, v2]
-                    ])
+        with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
+            # Create a partial function with fixed arguments
+            create_faces_partial = partial(
+                create_faces_for_chunk, 
+                cols=cols, 
+                resampled_water_mask_flat=resampled_water_mask_flat
+            )
+            
+            # Execute in parallel
+            future_results = [executor.submit(create_faces_partial, start, end) for start, end in chunks]
+            
+            # Collect results
+            for future in concurrent.futures.as_completed(future_results):
+                chunk_water_faces, chunk_land_faces = future.result()
+                water_faces.extend(chunk_water_faces)
+                land_faces.extend(chunk_land_faces)
         
-        # Create base and side walls (only for land)
+        print(f"Face generation completed in {time.time() - faces_start:.2f} seconds")
+        
+        # Create base and side walls for land (this part is less computationally intensive,
+        # so we'll keep it serial for now)
+        print("Creating base and walls...")
         base_vertices = vertices.copy()
         min_z = vertices[:, 2].min()
         base_vertices[:, 2] = min_z - 0.01
@@ -817,82 +856,147 @@ class TerrainGenerator:
         all_vertices = np.vstack([vertices, base_vertices])
         
         # Add side walls for the land mesh
-        for j in tqdm(range(cols - 1), desc="Creating walls"):
-            # Front edge (i=0)
-            v0, v1 = j, j+1
-            v0_base, v1_base = v0 + vertex_count, v1 + vertex_count
-            
-            if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
-                land_faces.extend([
-                    [v0, v1, v0_base],
-                    [v1, v1_base, v0_base]
-                ])
-            
-            # Back edge (i=rows-1)
-            v0 = (rows - 1) * cols + j
-            v1 = v0 + 1
-            v0_base = v0 + vertex_count
-            v1_base = v1 + vertex_count
-            
-            if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
-                land_faces.extend([
-                    [v0, v1, v0_base],
-                    [v1, v1_base, v0_base]
-                ])
+        wall_start = time.time()
         
-        for i in range(rows - 1):
-            # Left edge (j=0)
-            v0 = i * cols
-            v1 = (i + 1) * cols
-            v0_base = v0 + vertex_count
-            v1_base = v1 + vertex_count
+        # Process side walls in parallel
+        def create_walls_for_range(start_idx, end_idx, is_columns=True):
+            wall_faces = []
             
-            if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
-                land_faces.extend([
-                    [v0, v1, v0_base],
-                    [v1, v1_base, v0_base]
-                ])
+            if is_columns:
+                # Process columns (front and back walls)
+                for j in range(start_idx, end_idx):
+                    # Front edge (i=0)
+                    v0, v1 = j, j+1
+                    v0_base, v1_base = v0 + vertex_count, v1 + vertex_count
+                    
+                    if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                        wall_faces.extend([
+                            [v0, v1, v0_base],
+                            [v1, v1_base, v0_base]
+                        ])
+                    
+                    # Back edge (i=rows-1)
+                    v0 = (rows - 1) * cols + j
+                    v1 = v0 + 1
+                    v0_base = v0 + vertex_count
+                    v1_base = v1 + vertex_count
+                    
+                    if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                        wall_faces.extend([
+                            [v0, v1, v0_base],
+                            [v1, v1_base, v0_base]
+                        ])
+            else:
+                # Process rows (left and right walls)
+                for i in range(start_idx, end_idx):
+                    # Left edge (j=0)
+                    v0 = i * cols
+                    v1 = (i + 1) * cols
+                    v0_base = v0 + vertex_count
+                    v1_base = v1 + vertex_count
+                    
+                    if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                        wall_faces.extend([
+                            [v0, v1, v0_base],
+                            [v1, v1_base, v0_base]
+                        ])
+                    
+                    # Right edge (j=cols-1)
+                    v0 = i * cols + (cols - 1)
+                    v1 = (i + 1) * cols + (cols - 1)
+                    v0_base = v0 + vertex_count
+                    v1_base = v1 + vertex_count
+                    
+                    if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                        wall_faces.extend([
+                            [v0, v1, v0_base],
+                            [v1, v1_base, v0_base]
+                        ])
             
-            # Right edge (j=cols-1)
-            v0 = i * cols + (cols - 1)
-            v1 = (i + 1) * cols + (cols - 1)
-            v0_base = v0 + vertex_count
-            v1_base = v1 + vertex_count
-            
-            if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
-                land_faces.extend([
-                    [v0, v1, v0_base],
-                    [v1, v1_base, v0_base]
-                ])
+            return wall_faces
         
-        # Add base face triangles for land
-        for i in range(rows - 1):
-            for j in range(cols - 1):
-                v0 = i * cols + j + vertex_count
-                v1 = v0 + 1
-                v2 = (i + 1) * cols + j + vertex_count
-                v3 = v2 + 1
-                
-                v0_orig = v0 - vertex_count
-                v1_orig = v1 - vertex_count
-                v2_orig = v2 - vertex_count
-                v3_orig = v3 - vertex_count
-                
-                if (not resampled_water_mask_flat[v0_orig] and 
-                    not resampled_water_mask_flat[v1_orig] and 
-                    not resampled_water_mask_flat[v2_orig] and 
-                    not resampled_water_mask_flat[v3_orig]):
-                    land_faces.extend([
-                        [v0, v2, v1],
-                        [v1, v2, v3]
-                    ])
+        # Split wall work into chunks
+        col_chunks = [(i, min(i + chunk_size, cols - 1)) for i in range(0, cols - 1, chunk_size)]
+        row_chunks = [(i, min(i + chunk_size, rows - 1)) for i in range(0, rows - 1, chunk_size)]
+        
+        # Use ThreadPoolExecutor for walls (less CPU intensive, more IO bound)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_cores) as executor:
+            # Process column walls
+            col_wall_partial = partial(create_walls_for_range, is_columns=True)
+            col_futures = [executor.submit(col_wall_partial, start, end) for start, end in col_chunks]
+            
+            # Process row walls
+            row_wall_partial = partial(create_walls_for_range, is_columns=False)
+            row_futures = [executor.submit(row_wall_partial, start, end) for start, end in row_chunks]
+            
+            # Collect results from all futures
+            for future in concurrent.futures.as_completed(col_futures + row_futures):
+                land_faces.extend(future.result())
+        
+        print(f"Wall creation completed in {time.time() - wall_start:.2f} seconds")
+        
+        # Add base face triangles for land in parallel
+        base_start = time.time()
+        
+        def create_base_faces_for_chunk(start_row, end_row, cols, resampled_water_mask_flat, vertex_count):
+            base_faces = []
+            
+            for i in range(start_row, end_row):
+                for j in range(cols - 1):
+                    v0 = i * cols + j + vertex_count
+                    v1 = v0 + 1
+                    v2 = (i + 1) * cols + j + vertex_count
+                    v3 = v2 + 1
+                    
+                    # Skip if we're at the last row
+                    if i >= rows - 1:
+                        continue
+                    
+                    v0_orig = v0 - vertex_count
+                    v1_orig = v1 - vertex_count
+                    v2_orig = v2 - vertex_count
+                    v3_orig = v3 - vertex_count
+                    
+                    if (not resampled_water_mask_flat[v0_orig - vertex_count] and 
+                        not resampled_water_mask_flat[v1_orig - vertex_count] and 
+                        not resampled_water_mask_flat[v2_orig - vertex_count] and 
+                        not resampled_water_mask_flat[v3_orig - vertex_count]):
+                        base_faces.extend([
+                            [v0, v2, v1],
+                            [v1, v2, v3]
+                        ])
+            
+            return base_faces
+        
+        # Use ProcessPoolExecutor for base faces
+        with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
+            # Create a partial function with fixed arguments
+            create_base_faces_partial = partial(
+                create_base_faces_for_chunk, 
+                cols=cols, 
+                resampled_water_mask_flat=resampled_water_mask_flat,
+                vertex_count=vertex_count
+            )
+            
+            # Execute in parallel
+            base_futures = [executor.submit(create_base_faces_partial, start, end) for start, end in chunks]
+            
+            # Collect results
+            for future in concurrent.futures.as_completed(base_futures):
+                land_faces.extend(future.result())
+        
+        print(f"Base triangle creation completed in {time.time() - base_start:.2f} seconds")
         
         # Convert face lists to numpy arrays
+        print("Converting faces to arrays...")
+        array_start = time.time()
         water_faces_array = np.array(water_faces) if water_faces else np.empty((0, 3), dtype=np.int64)
         land_faces_array = np.array(land_faces) if land_faces else np.empty((0, 3), dtype=np.int64)
+        print(f"Array conversion completed in {time.time() - array_start:.2f} seconds")
         
         # Create separate meshes for water and land
         print("Creating water and land meshes...")
+        mesh_start = time.time()
         water_mesh = None
         land_mesh = None
         
@@ -912,6 +1016,8 @@ class TerrainGenerator:
                 face_colors=[200, 200, 200, 255]  # Light gray color with alpha
             )
         
+        print(f"Mesh creation completed in {time.time() - mesh_start:.2f} seconds")
+        
         # Combine the meshes into a scene
         scene = trimesh.Scene()
         
@@ -922,10 +1028,13 @@ class TerrainGenerator:
             scene.add_geometry(land_mesh, geom_name="land")
         
         # Fix normals on all meshes
+        normal_start = time.time()
         for mesh in scene.geometry.values():
             mesh.fix_normals()
+        print(f"Normal fixing completed in {time.time() - normal_start:.2f} seconds")
         
         # Center the scene - can't use centroid property directly
+        transform_start = time.time()
         scene_centroid = scene.centroid
         for mesh in scene.geometry.values():
             mesh.vertices -= scene_centroid
@@ -945,10 +1054,14 @@ class TerrainGenerator:
         for mesh in scene.geometry.values():
             mesh.apply_transform(rotation)
         
+        print(f"Transformation completed in {time.time() - transform_start:.2f} seconds")
+        
         # Print mesh information
         print(f"Terrain model created with {len(scene.geometry)} geometries")
         for name, mesh in scene.geometry.items():
             print(f"  {name}: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+        
+        print(f"Total terrain generation time: {time.time() - start_time:.2f} seconds")
         
         # Return the scene object directly
         return scene
