@@ -569,6 +569,27 @@ class TerrainGenerator:
         
         return scene
     
+    # Function to read a single tile (moved outside for multiprocessing)
+    def _read_tile(self, coords_path):
+        """
+        Read a single SRTM tile.
+        
+        Args:
+            coords_path (tuple): (coords, file_path) tuple
+            
+        Returns:
+            tuple: (coords, tile_info) tuple
+        """
+        coords, file_path = coords_path
+        elevation_data, _ = self.read_hgt_file(file_path)
+        return coords, {
+            'data': elevation_data,
+            'north': coords[0],
+            'south': coords[0] - 1,
+            'west': coords[1],
+            'east': coords[1] + 1
+        }
+        
     def _stitch_srtm_tiles(self, tile_files):
         """
         Stitch SRTM tiles with proper north-up orientation using parallel processing.
@@ -581,23 +602,11 @@ class TerrainGenerator:
         """
         print("Reading and arranging SRTM tiles in parallel...")
         
-        # Function to read a single tile
-        def read_tile(coords_path):
-            coords, file_path = coords_path
-            elevation_data, _ = self.read_hgt_file(file_path)
-            return coords, {
-                'data': elevation_data,
-                'north': coords[0],
-                'south': coords[0] - 1,
-                'west': coords[1],
-                'east': coords[1] + 1
-            }
-        
-        # Use a process pool to read tiles in parallel
+        # Use ThreadPoolExecutor instead of ProcessPoolExecutor to avoid pickling issues
         start_time = time.time()
         num_cores = multiprocessing.cpu_count()
-        with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
-            results = list(executor.map(read_tile, tile_files.items()))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_cores) as executor:
+            results = list(executor.map(lambda item: self._read_tile(item), tile_files.items()))
         
         # Convert results to a dictionary
         tile_data = {coords: info for coords, info in results}
@@ -646,6 +655,150 @@ class TerrainGenerator:
         merged_data = np.flipud(merged_data)
         
         return merged_data
+    
+    # Function for creating faces for a chunk of rows (moved outside for multiprocessing)
+    def _create_faces_for_chunk(self, start_row, end_row, cols, resampled_water_mask_flat):
+        water_faces = []
+        land_faces = []
+        
+        for i in range(start_row, end_row):
+            for j in range(cols - 1):
+                v0 = i * cols + j
+                v1 = v0 + 1
+                v2 = (i + 1) * cols + j
+                v3 = v2 + 1
+                
+                # Skip if we're at the last row
+                if i >= self.rows - 1:
+                    continue
+                
+                # Check if this quad is entirely water or entirely land
+                is_water_quad = (
+                    resampled_water_mask_flat[v0] and 
+                    resampled_water_mask_flat[v1] and 
+                    resampled_water_mask_flat[v2] and 
+                    resampled_water_mask_flat[v3]
+                )
+                
+                is_land_quad = (
+                    not resampled_water_mask_flat[v0] and 
+                    not resampled_water_mask_flat[v1] and 
+                    not resampled_water_mask_flat[v2] and 
+                    not resampled_water_mask_flat[v3]
+                )
+                
+                # If it's a mixed quad (part water, part land), we need to make a decision
+                # For simplicity, we'll assign it to land if at least 3 vertices are land
+                if not is_water_quad and not is_land_quad:
+                    land_count = (
+                        (not resampled_water_mask_flat[v0]) + 
+                        (not resampled_water_mask_flat[v1]) + 
+                        (not resampled_water_mask_flat[v2]) + 
+                        (not resampled_water_mask_flat[v3])
+                    )
+                    is_land_quad = land_count >= 3
+                    is_water_quad = not is_land_quad
+                
+                if is_water_quad:
+                    water_faces.extend([
+                        [v0, v1, v2],
+                        [v1, v3, v2]
+                    ])
+                else:
+                    land_faces.extend([
+                        [v0, v1, v2],
+                        [v1, v3, v2]
+                    ])
+                    
+        return water_faces, land_faces
+    
+    # Function for creating walls for a range (moved outside for multiprocessing)    
+    def _create_walls_for_range(self, start_idx, end_idx, is_columns=True, resampled_water_mask_flat=None, cols=None, vertex_count=None):
+        wall_faces = []
+        
+        if is_columns:
+            # Process columns (front and back walls)
+            for j in range(start_idx, end_idx):
+                # Front edge (i=0)
+                v0, v1 = j, j+1
+                v0_base, v1_base = v0 + vertex_count, v1 + vertex_count
+                
+                if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                    wall_faces.extend([
+                        [v0, v1, v0_base],
+                        [v1, v1_base, v0_base]
+                    ])
+                
+                # Back edge (i=rows-1)
+                v0 = (self.rows - 1) * cols + j
+                v1 = v0 + 1
+                v0_base = v0 + vertex_count
+                v1_base = v1 + vertex_count
+                
+                if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                    wall_faces.extend([
+                        [v0, v1, v0_base],
+                        [v1, v1_base, v0_base]
+                    ])
+        else:
+            # Process rows (left and right walls)
+            for i in range(start_idx, end_idx):
+                # Left edge (j=0)
+                v0 = i * cols
+                v1 = (i + 1) * cols
+                v0_base = v0 + vertex_count
+                v1_base = v1 + vertex_count
+                
+                if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                    wall_faces.extend([
+                        [v0, v1, v0_base],
+                        [v1, v1_base, v0_base]
+                    ])
+                
+                # Right edge (j=cols-1)
+                v0 = i * cols + (cols - 1)
+                v1 = (i + 1) * cols + (cols - 1)
+                v0_base = v0 + vertex_count
+                v1_base = v1 + vertex_count
+                
+                if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                    wall_faces.extend([
+                        [v0, v1, v0_base],
+                        [v1, v1_base, v0_base]
+                    ])
+        
+        return wall_faces
+    
+    # Function for creating base faces for a chunk (moved outside for multiprocessing)
+    def _create_base_faces_for_chunk(self, start_row, end_row, cols, resampled_water_mask_flat, vertex_count):
+        base_faces = []
+        
+        for i in range(start_row, end_row):
+            for j in range(cols - 1):
+                v0 = i * cols + j + vertex_count
+                v1 = v0 + 1
+                v2 = (i + 1) * cols + j + vertex_count
+                v3 = v2 + 1
+                
+                # Skip if we're at the last row
+                if i >= self.rows - 1:
+                    continue
+                
+                v0_orig = v0 - vertex_count
+                v1_orig = v1 - vertex_count
+                v2_orig = v2 - vertex_count
+                v3_orig = v3 - vertex_count
+                
+                if (not resampled_water_mask_flat[v0_orig - vertex_count] and 
+                    not resampled_water_mask_flat[v1_orig - vertex_count] and 
+                    not resampled_water_mask_flat[v2_orig - vertex_count] and 
+                    not resampled_water_mask_flat[v3_orig - vertex_count]):
+                    base_faces.extend([
+                        [v0, v2, v1],
+                        [v1, v2, v3]
+                    ])
+        
+        return base_faces
     
     def _create_terrain_model_from_elevation(self, elevation_data, bounds, detail_level=0.2,
                                            water_level=-15.0, shore_height=1.0, shore_buffer=1,
@@ -712,6 +865,10 @@ class TerrainGenerator:
         cols = max(cols, 20)
         rows = max(rows, 20)
         
+        # Store these values as instance variables so the helper methods can access them
+        self.rows = rows
+        self.cols = cols
+        
         print(f"Grid dimensions: {rows}x{cols} ({rows*cols:,} vertices)")
         
         # Create vertex grid
@@ -760,76 +917,20 @@ class TerrainGenerator:
         # ----- Create separate meshes for water and land using parallel processing -----
         print("Generating terrain faces in parallel...")
         
-        # Function to create faces for a chunk of rows
-        def create_faces_for_chunk(start_row, end_row, cols, resampled_water_mask_flat):
-            water_faces = []
-            land_faces = []
-            
-            for i in range(start_row, end_row):
-                for j in range(cols - 1):
-                    v0 = i * cols + j
-                    v1 = v0 + 1
-                    v2 = (i + 1) * cols + j
-                    v3 = v2 + 1
-                    
-                    # Skip if we're at the last row
-                    if i >= rows - 1:
-                        continue
-                    
-                    # Check if this quad is entirely water or entirely land
-                    is_water_quad = (
-                        resampled_water_mask_flat[v0] and 
-                        resampled_water_mask_flat[v1] and 
-                        resampled_water_mask_flat[v2] and 
-                        resampled_water_mask_flat[v3]
-                    )
-                    
-                    is_land_quad = (
-                        not resampled_water_mask_flat[v0] and 
-                        not resampled_water_mask_flat[v1] and 
-                        not resampled_water_mask_flat[v2] and 
-                        not resampled_water_mask_flat[v3]
-                    )
-                    
-                    # If it's a mixed quad (part water, part land), we need to make a decision
-                    # For simplicity, we'll assign it to land if at least 3 vertices are land
-                    if not is_water_quad and not is_land_quad:
-                        land_count = (
-                            (not resampled_water_mask_flat[v0]) + 
-                            (not resampled_water_mask_flat[v1]) + 
-                            (not resampled_water_mask_flat[v2]) + 
-                            (not resampled_water_mask_flat[v3])
-                        )
-                        is_land_quad = land_count >= 3
-                        is_water_quad = not is_land_quad
-                    
-                    if is_water_quad:
-                        water_faces.extend([
-                            [v0, v1, v2],
-                            [v1, v3, v2]
-                        ])
-                    else:
-                        land_faces.extend([
-                            [v0, v1, v2],
-                            [v1, v3, v2]
-                        ])
-                        
-            return water_faces, land_faces
-        
         # Split the work into chunks based on available CPU cores
         num_cores = multiprocessing.cpu_count()
         chunk_size = max(1, (rows - 1) // num_cores)
         chunks = [(i, min(i + chunk_size, rows - 1)) for i in range(0, rows - 1, chunk_size)]
         
-        # Use ProcessPoolExecutor for parallel face creation
+        # Use ThreadPoolExecutor instead of ProcessPoolExecutor to avoid pickling issues
         faces_start = time.time()
         water_faces = []
         land_faces = []
         
-        with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_cores) as executor:
             # Create a partial function with fixed arguments
             create_faces_partial = partial(
-                create_faces_for_chunk, 
+                self._create_faces_for_chunk, 
                 cols=cols, 
                 resampled_water_mask_flat=resampled_water_mask_flat
             )
@@ -859,74 +960,31 @@ class TerrainGenerator:
         wall_start = time.time()
         
         # Process side walls in parallel
-        def create_walls_for_range(start_idx, end_idx, is_columns=True):
-            wall_faces = []
-            
-            if is_columns:
-                # Process columns (front and back walls)
-                for j in range(start_idx, end_idx):
-                    # Front edge (i=0)
-                    v0, v1 = j, j+1
-                    v0_base, v1_base = v0 + vertex_count, v1 + vertex_count
-                    
-                    if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
-                        wall_faces.extend([
-                            [v0, v1, v0_base],
-                            [v1, v1_base, v0_base]
-                        ])
-                    
-                    # Back edge (i=rows-1)
-                    v0 = (rows - 1) * cols + j
-                    v1 = v0 + 1
-                    v0_base = v0 + vertex_count
-                    v1_base = v1 + vertex_count
-                    
-                    if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
-                        wall_faces.extend([
-                            [v0, v1, v0_base],
-                            [v1, v1_base, v0_base]
-                        ])
-            else:
-                # Process rows (left and right walls)
-                for i in range(start_idx, end_idx):
-                    # Left edge (j=0)
-                    v0 = i * cols
-                    v1 = (i + 1) * cols
-                    v0_base = v0 + vertex_count
-                    v1_base = v1 + vertex_count
-                    
-                    if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
-                        wall_faces.extend([
-                            [v0, v1, v0_base],
-                            [v1, v1_base, v0_base]
-                        ])
-                    
-                    # Right edge (j=cols-1)
-                    v0 = i * cols + (cols - 1)
-                    v1 = (i + 1) * cols + (cols - 1)
-                    v0_base = v0 + vertex_count
-                    v1_base = v1 + vertex_count
-                    
-                    if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
-                        wall_faces.extend([
-                            [v0, v1, v0_base],
-                            [v1, v1_base, v0_base]
-                        ])
-            
-            return wall_faces
         
         # Split wall work into chunks
         col_chunks = [(i, min(i + chunk_size, cols - 1)) for i in range(0, cols - 1, chunk_size)]
         row_chunks = [(i, min(i + chunk_size, rows - 1)) for i in range(0, rows - 1, chunk_size)]
         
-        # Use ThreadPoolExecutor for walls (less CPU intensive, more IO bound)
+        # Use ThreadPoolExecutor for walls
         with concurrent.futures.ThreadPoolExecutor(max_workers=num_cores) as executor:
             # Process column walls
-            col_wall_partial = partial(create_walls_for_range, is_columns=True)
+            col_wall_partial = partial(
+                self._create_walls_for_range, 
+                is_columns=True, 
+                resampled_water_mask_flat=resampled_water_mask_flat,
+                cols=cols,
+                vertex_count=vertex_count
+            )
             col_futures = [executor.submit(col_wall_partial, start, end) for start, end in col_chunks]
             
             # Process row walls
-            row_wall_partial = partial(create_walls_for_range, is_columns=False)
+            row_wall_partial = partial(
+                self._create_walls_for_range, 
+                is_columns=False,
+                resampled_water_mask_flat=resampled_water_mask_flat,
+                cols=cols,
+                vertex_count=vertex_count
+            )
             row_futures = [executor.submit(row_wall_partial, start, end) for start, end in row_chunks]
             
             # Collect results from all futures
@@ -937,42 +995,12 @@ class TerrainGenerator:
         
         # Add base face triangles for land in parallel
         base_start = time.time()
-        
-        def create_base_faces_for_chunk(start_row, end_row, cols, resampled_water_mask_flat, vertex_count):
-            base_faces = []
-            
-            for i in range(start_row, end_row):
-                for j in range(cols - 1):
-                    v0 = i * cols + j + vertex_count
-                    v1 = v0 + 1
-                    v2 = (i + 1) * cols + j + vertex_count
-                    v3 = v2 + 1
-                    
-                    # Skip if we're at the last row
-                    if i >= rows - 1:
-                        continue
-                    
-                    v0_orig = v0 - vertex_count
-                    v1_orig = v1 - vertex_count
-                    v2_orig = v2 - vertex_count
-                    v3_orig = v3 - vertex_count
-                    
-                    if (not resampled_water_mask_flat[v0_orig - vertex_count] and 
-                        not resampled_water_mask_flat[v1_orig - vertex_count] and 
-                        not resampled_water_mask_flat[v2_orig - vertex_count] and 
-                        not resampled_water_mask_flat[v3_orig - vertex_count]):
-                        base_faces.extend([
-                            [v0, v2, v1],
-                            [v1, v2, v3]
-                        ])
-            
-            return base_faces
-        
-        # Use ProcessPoolExecutor for base faces
-        with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
+                
+        # Use ThreadPoolExecutor for base faces
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_cores) as executor:
             # Create a partial function with fixed arguments
             create_base_faces_partial = partial(
-                create_base_faces_for_chunk, 
+                self._create_base_faces_for_chunk, 
                 cols=cols, 
                 resampled_water_mask_flat=resampled_water_mask_flat,
                 vertex_count=vertex_count
