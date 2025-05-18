@@ -39,6 +39,8 @@ def main():
                         help="Number of cells for shore buffer (default: 1)")
     parser.add_argument("--height-scale", type=float, default=0.05, 
                         help="Scale factor for height (default: 0.05)")
+    parser.add_argument("--debug", action="store_true",
+                        help="Generate debug visualizations as JPG files")
     
     args = parser.parse_args()
 
@@ -63,7 +65,8 @@ def main():
         water_level=args.water_level,
         shore_height=args.shore_height,
         shore_buffer=args.shore_buffer,
-        height_scale=args.height_scale
+        height_scale=args.height_scale,
+        debug=args.debug
     )
 
     print("\nTerrain generation complete!")

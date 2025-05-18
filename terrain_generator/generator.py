@@ -528,7 +528,8 @@ class TerrainGenerator:
             raise ValueError(f"Error exporting to GLB: {str(e)}")
 
     def generate_terrain(self, bounds, topo_dir="topo", detail_level=0.2, output_prefix="terrain",
-                       water_level=-15.0, shore_height=1.0, shore_buffer=1, height_scale=0.05):
+                       water_level=-15.0, shore_height=1.0, shore_buffer=1, height_scale=0.05,
+                       debug=False):
         """
         Generate terrain model using SRTM data with proper north-up orientation.
         
@@ -541,6 +542,7 @@ class TerrainGenerator:
             shore_height (float): Elevation value for shore areas
             shore_buffer (int): Number of cells for shore buffer
             height_scale (float): Scale factor for height relative to horizontal dimensions
+            debug (bool): Whether to generate debug visualizations
             
         Returns:
             trimesh.Trimesh: The generated terrain mesh
@@ -560,6 +562,10 @@ class TerrainGenerator:
         
         # Stitch the tiles with standard SRTM arrangement
         elevation_data = self._stitch_srtm_tiles(tile_files)
+        
+        # Create debug visualizations if requested
+        if debug:
+            self._generate_debug_visualizations(elevation_data, bounds, output_prefix)
         
         # Create the terrain model
         mesh = self._create_terrain_model_from_elevation(
@@ -851,3 +857,145 @@ class TerrainGenerator:
         mesh.apply_transform(rotation)
         
         return mesh
+
+    def _generate_debug_visualizations(self, elevation_data, bounds, output_prefix):
+        """
+        Generate and save debug visualizations for the terrain.
+        
+        Args:
+            elevation_data (numpy.ndarray): 2D array of elevation values
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
+            output_prefix (str): Prefix for output files
+        """
+        print("Generating debug visualizations...")
+        
+        # Create land/sea visualization
+        self._visualize_land_sea(elevation_data, bounds, output_prefix)
+        
+        # Create elevation visualization
+        self._visualize_elevation(elevation_data, bounds, output_prefix)
+    
+    def _visualize_land_sea(self, elevation_data, bounds, output_prefix):
+        """
+        Create and save a visualization of land vs. sea.
+        
+        Args:
+            elevation_data (numpy.ndarray): 2D array of elevation values
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
+            output_prefix (str): Prefix for output files
+        """
+        min_lon, min_lat, max_lon, max_lat = bounds
+        
+        # Create land/sea mask (elevation <= 0 is water)
+        water_mask = elevation_data <= 0
+        
+        # Create a figure
+        plt.figure(figsize=(10, 8))
+        
+        # Plot the land/sea mask
+        plt.imshow(water_mask, cmap='Blues_r', extent=[min_lon, max_lon, min_lat, max_lat], origin='lower')
+        
+        # Add color bar and labels
+        cbar = plt.colorbar(ticks=[0, 1])
+        cbar.set_ticklabels(['Land', 'Water'])
+        
+        # Add title and labels
+        plt.title('Land vs. Sea Visualization')
+        plt.xlabel('Longitude')
+        plt.ylabel('Latitude')
+        
+        # Add grid
+        plt.grid(True, linestyle='--', alpha=0.6)
+        
+        # Save the visualization
+        output_path = f"{output_prefix}_land_sea.jpg"
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Land/sea visualization saved to {output_path}")
+    
+    def _visualize_elevation(self, elevation_data, bounds, output_prefix):
+        """
+        Create and save a visualization of elevation.
+        
+        Args:
+            elevation_data (numpy.ndarray): 2D array of elevation values
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
+            output_prefix (str): Prefix for output files
+        """
+        min_lon, min_lat, max_lon, max_lat = bounds
+        
+        # Create a figure
+        plt.figure(figsize=(10, 8))
+        
+        # Create a terrain colormap
+        terrain_cmap = plt.cm.terrain
+        
+        # Plot the elevation data
+        im = plt.imshow(elevation_data, cmap=terrain_cmap, extent=[min_lon, max_lon, min_lat, max_lat], origin='lower')
+        
+        # Add color bar
+        cbar = plt.colorbar(im)
+        cbar.set_label('Elevation (m)')
+        
+        # Add title and labels
+        plt.title('Elevation Visualization')
+        plt.xlabel('Longitude')
+        plt.ylabel('Latitude')
+        
+        # Add grid
+        plt.grid(True, linestyle='--', alpha=0.6)
+        
+        # Save the visualization
+        output_path = f"{output_prefix}_elevation.jpg"
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Create a 3D visualization of the elevation
+        self._visualize_3d_elevation(elevation_data, bounds, output_prefix)
+        
+        print(f"Elevation visualization saved to {output_path}")
+    
+    def _visualize_3d_elevation(self, elevation_data, bounds, output_prefix):
+        """
+        Create and save a 3D visualization of elevation.
+        
+        Args:
+            elevation_data (numpy.ndarray): 2D array of elevation values
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
+            output_prefix (str): Prefix for output files
+        """
+        min_lon, min_lat, max_lon, max_lat = bounds
+        
+        # Create a figure with 3D axes
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Create a meshgrid for the plot
+        x = np.linspace(min_lon, max_lon, elevation_data.shape[1])
+        y = np.linspace(min_lat, max_lat, elevation_data.shape[0])
+        X, Y = np.meshgrid(x, y)
+        
+        # Plot the surface
+        surf = ax.plot_surface(X, Y, elevation_data, cmap='terrain', 
+                              linewidth=0, antialiased=True, alpha=0.8)
+        
+        # Add color bar
+        cbar = fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+        cbar.set_label('Elevation (m)')
+        
+        # Set labels and title
+        ax.set_xlabel('Longitude')
+        ax.set_ylabel('Latitude')
+        ax.set_zlabel('Elevation (m)')
+        ax.set_title('3D Elevation Visualization')
+        
+        # Adjust the viewing angle for better perspective
+        ax.view_init(elev=30, azim=45)
+        
+        # Save the visualization
+        output_path = f"{output_prefix}_elevation_3d.jpg"
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"3D elevation visualization saved to {output_path}")
