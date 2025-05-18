@@ -54,6 +54,7 @@ topo/
 *.geotiff
 *.glb
 *.obj
+*.png
 *.stl
 output/
 data/

@@ -4,26 +4,31 @@ import argparse
 from terrain_generator.generator import TerrainGenerator
 import os
 
-def main():
-    parser = argparse.ArgumentParser(description='Generate 3D terrain model from SRTM data')
-    parser.add_argument('hgt_file', help='Path to input .hgt file')
-    parser.add_argument('output_file', help='Path to output .glb file')
-    parser.add_argument('--bounds', type=float, nargs=4,
-                      metavar=('MIN_LON', 'MIN_LAT', 'MAX_LON', 'MAX_LAT'),
-                      help='Bounding box coordinates (min_lon min_lat max_lon max_lat)')
-    parser.add_argument('--detail', type=float, default=1.0,
-                      help='Detail level (0.1 to 1.0, default: 1.0)')
-    
-    args = parser.parse_args()
-    
-    generator = TerrainGenerator()
-    mesh = generator.process_region(
-        args.hgt_file,
-        args.bounds,
-        args.detail
-    )
-    generator.export_glb(mesh, args.output_file)
-    print(f"Terrain model exported to {args.output_file}")
 
-if __name__ == '__main__':
+def main():
+    """
+    Generate terrain models using TerrainGenerator.
+    """
+    print("CityModelGenerator - World to Model")
+
+    # Create the terrain generator
+    generator = TerrainGenerator()
+
+    # Generate San Francisco Bay Area model with proper north-up orientation
+    # Bounds: San Francisco Bay Area (-123.0, 36.9, -121.7, 38.1)
+    # This includes San Francisco, Oakland, Berkeley, San Jose, etc.
+    print("\nGenerating San Francisco Bay Area terrain model...")
+
+    # Generate at medium detail level (0.2)
+    generator.generate_bay_area_terrain(
+        bounds=(-122.673340, 37.225955, -121.753235, 38.184228),
+        topo_dir="topo",
+        detail_level=0.2,
+        output_prefix="bay_area",
+    )
+
+    print("\nTerrain generation complete!")
+
+
+if __name__ == "__main__":
     main()

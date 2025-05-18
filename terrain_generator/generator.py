@@ -7,6 +7,10 @@ from pyproj import Transformer
 from tqdm import tqdm
 import glob
 from pathlib import Path
+import re  # Add this for regex pattern matching
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from scipy.ndimage import binary_dilation, zoom
 
 class TerrainGenerator:
     def __init__(self):
@@ -34,7 +38,8 @@ class TerrainGenerator:
         required_tiles = []
         for lat in range(min_lat_tile, max_lat_tile + 1):
             for lon in range(min_lon_tile, max_lon_tile + 1):
-                required_tiles.append((lat, -lon))  # Negative longitude for west
+                # For western hemisphere (negative longitude), we use negative values
+                required_tiles.append((lat, lon))
                 
         return required_tiles
     
@@ -42,6 +47,7 @@ class TerrainGenerator:
         """Find available SRTM files for required tiles."""
         tile_files = {}
         for lat, lon in required_tiles:
+            # SRTM naming convention: Nx.Wx.hgt.zip where x=latitude, longitude digits
             pattern = f"N{lat:02d}W{abs(lon):03d}*.hgt.zip"
             matches = glob.glob(os.path.join(topo_dir, pattern))
             if matches:
@@ -71,7 +77,6 @@ class TerrainGenerator:
         try:
             # If it's a zip file, extract the .hgt file
             if hgt_path.endswith('.zip'):
-                print(f"\nDEBUG: Reading zip file: {hgt_path}")
                 with zipfile.ZipFile(hgt_path, 'r') as zip_ref:
                     # Find the .hgt file in the zip
                     hgt_files = [f for f in zip_ref.namelist() if f.endswith('.hgt')]
@@ -99,15 +104,7 @@ class TerrainGenerator:
                         # Handle no-data values
                         no_data = band.GetNoDataValue()
                         if no_data is not None:
-                            print(f"DEBUG: No-data value found: {no_data}")
                             elevation_data = np.where(elevation_data == no_data, 0, elevation_data)
-                        
-                        # Debug information about elevation data
-                        print(f"DEBUG: Raw elevation data stats for {hgt_files[0]}:")
-                        print(f"  Shape: {elevation_data.shape}")
-                        print(f"  Range: {elevation_data.min():.1f}m to {elevation_data.max():.1f}m")
-                        print(f"  Mean: {elevation_data.mean():.1f}m")
-                        print(f"  Non-zero values: {np.count_nonzero(elevation_data):,}")
                         
                         ds = None  # Close the dataset
                         return elevation_data, pixel_size
@@ -191,23 +188,23 @@ class TerrainGenerator:
             # Tiles are positioned from top-left (north-west) corner
             
             # Latitude: Convert from geographic space to pixel space
-            # Note: max_lat - tile_lat gives us the # of degrees from the north edge
+            # For latitude, larger values are north, so we calculate from top
             lat_offset = int((max_lat - (tile_lat + 1)) * (points_per_degree - 1))
             
             # Longitude: Convert from geographic space to pixel space
-            # Note: tile_lon - min_lon gives us the # of degrees from the west edge
+            # For longitude in western hemisphere, we need to handle negative values properly
             lon_offset = int((tile_lon - min_lon) * (points_per_degree - 1))
-            
-            print(f"DEBUG: Tile position:")
-            print(f"  In degrees: lat={tile_lat+1}:{tile_lat}, lon={tile_lon}:{tile_lon+1}")
-            print(f"  Region: lat={max_lat:.1f}:{min_lat:.1f}, lon={min_lon:.1f}:{max_lon:.1f}")
-            print(f"  Grid offset: ({lat_offset}, {lon_offset})")
-            
-            print(f"DEBUG: Tile fractions - lat: {lat_fraction:.3f}, lon: {lon_fraction:.3f}")
             
             print(f"\nProcessing tile N{tile_lat}W{abs(tile_lon)}:")
             print(f"Position in output: ({lat_offset}, {lon_offset})")
             print(f"Data range: {data.min():.1f}m to {data.max():.1f}m")
+            
+            # Error checking for offsets
+            if lat_offset < 0 or lon_offset < 0:
+                print(f"Warning: Adjusting negative offset ({lat_offset}, {lon_offset})")
+                # Adjust to avoid array out of bounds issues
+                lat_offset = max(0, lat_offset)
+                lon_offset = max(0, lon_offset)
             
             # Create weight mask
             weight_mask = np.ones_like(data)
@@ -368,41 +365,21 @@ class TerrainGenerator:
         from scipy.ndimage import zoom
         zoom_x = cols / elevation_data.shape[1]
         zoom_y = rows / elevation_data.shape[0]
-        print(f"\nDEBUG: Elevation data before resampling:")
-        print(f"  Shape: {elevation_data.shape}")
-        print(f"  Range: {elevation_data.min():.1f}m to {elevation_data.max():.1f}m")
-        print(f"  Non-zero values: {np.count_nonzero(elevation_data):,}")
-        
-        print(f"\nDEBUG: Resampling from {elevation_data.shape} to {(rows, cols)}")
-        print(f"DEBUG: Zoom factors: x={zoom_x:.3f}, y={zoom_y:.3f}")
         
         elevation_data = zoom(elevation_data, (zoom_y, zoom_x), order=1)
-        print(f"\nDEBUG: Elevation data after resampling:")
-        print(f"  Shape: {elevation_data.shape}")
-        print(f"  Range: {elevation_data.min():.1f}m to {elevation_data.max():.1f}m")
-        print(f"  Non-zero values: {np.count_nonzero(elevation_data):,}")
         
         # Apply vertical exaggeration based on area size
         # For larger areas, use less exaggeration
         area_scale = np.sqrt(area_km2) / 100
         vertical_exaggeration = 2.0 / max(1.0, area_scale)
         elevation_data = elevation_data * vertical_exaggeration
-        print(f"\nDEBUG: After vertical exaggeration ({vertical_exaggeration:.1f}x):")
-        print(f"  Range: {elevation_data.min():.1f}m to {elevation_data.max():.1f}m")
         
-        print("\nDEBUG: Creating vertices array...")
         vertices = np.column_stack((
             x_grid.flatten(),
             y_grid.flatten(),
             elevation_data.flatten()
         ))
         
-        print("\nDEBUG: Vertex statistics before normalization:")
-        print(f"  X range: {vertices[:, 0].min():.1f}m to {vertices[:, 0].max():.1f}m")
-        print(f"  Y range: {vertices[:, 1].min():.1f}m to {vertices[:, 1].max():.1f}m")
-        print(f"  Z range: {vertices[:, 2].min():.1f}m to {vertices[:, 2].max():.1f}m")
-        
-        print("\nDEBUG: Normalizing coordinates...")
         # First normalize XY coordinates to 0-1 range while preserving aspect ratio
         xy_scale = 1.0 / max(width_m, height_m)
         vertices[:, 0] = (vertices[:, 0] - min_x) * xy_scale
@@ -411,26 +388,13 @@ class TerrainGenerator:
         # Scale elevation to be proportional to horizontal scale
         z_min = vertices[:, 2].min()
         z_range = vertices[:, 2].max() - z_min
-        print(f"\nDEBUG: Z-coordinate scaling:")
-        print(f"  Z min: {z_min:.3f}m")
-        print(f"  Z range: {z_range:.3f}m")
         
         if z_range > 0:
             # Calculate terrain scale based on area size
             terrain_scale = 0.15  # Fixed scale factor
-            print(f"DEBUG: Applying terrain scale factor: {terrain_scale:.3f}")
             vertices[:, 2] = ((vertices[:, 2] - z_min) / z_range) * terrain_scale
-            
-            print(f"\nDEBUG: Final vertex Z-coordinates:")
-            print(f"  Range: {vertices[:, 2].min():.3f} to {vertices[:, 2].max():.3f}")
-            print(f"  Mean: {vertices[:, 2].mean():.3f}")
-            print(f"  Std dev: {vertices[:, 2].std():.3f}")
         else:
-            print("\nDEBUG: WARNING - No elevation variation detected!")
-            print(f"  All Z values: {z_min:.3f}")
-            # Let's print some raw elevation data samples to diagnose
-            print("\nDEBUG: Raw elevation data samples:")
-            print(elevation_data.flatten()[:20])
+            print("\nWARNING - No elevation variation detected!")
         
         # Create faces for triangulation with progress bar
         print("Generating terrain mesh...")
@@ -562,3 +526,306 @@ class TerrainGenerator:
             mesh.export(output_path, file_type='glb')
         except Exception as e:
             raise ValueError(f"Error exporting to GLB: {str(e)}")
+
+    def generate_bay_area_terrain(self, bounds=(-123.0, 36.9, -121.7, 38.1), topo_dir="topo", detail_level=0.2, output_prefix="bay_area"):
+        """
+        Generate San Francisco Bay Area terrain model using SRTM data with proper north-up orientation.
+        
+        Args:
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
+            topo_dir (str): Directory containing SRTM data files
+            detail_level (float): Detail level (1.0 = highest detail, lower values reduce detail)
+            output_prefix (str): Prefix for output files
+            
+        Returns:
+            trimesh.Trimesh: The generated terrain mesh
+        """
+        print(f"Generating terrain model for bounds: {bounds}")
+        
+        # Find required tiles
+        required_tiles = self.find_required_tiles(bounds)
+        tile_files = self.find_tile_files(required_tiles, topo_dir)
+        
+        if not tile_files:
+            raise ValueError(f"No SRTM tiles found in {topo_dir} for the specified bounds")
+            
+        print(f"Using {len(tile_files)} SRTM tiles:")
+        for coords in tile_files.keys():
+            print(f"  N{coords[0]}W{-coords[1]}")
+        
+        # Stitch the tiles with standard SRTM arrangement
+        elevation_data = self._stitch_srtm_tiles(tile_files)
+        
+        # Create the terrain model
+        mesh = self._create_terrain_model_from_elevation(elevation_data, bounds, detail_level)
+        
+        # Export the model
+        output_path = f"{output_prefix}_{detail_level:.3f}.glb"
+        self.export_glb(mesh, output_path)
+        
+        return mesh
+    
+    def _stitch_srtm_tiles(self, tile_files):
+        """
+        Stitch SRTM tiles with proper north-up orientation.
+        
+        Args:
+            tile_files (dict): Dictionary mapping (lat, lon) to file paths
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
+            output_prefix (str): Prefix for visualization output file
+            
+        Returns:
+            numpy.ndarray: Combined elevation data with proper orientation
+        """
+        print("Reading and arranging SRTM tiles...")
+        tile_data = {}
+        
+        # Read all tiles
+        for (lat, lon), file_path in tile_files.items():
+            # Read the raw elevation data
+            elevation_data, _ = self.read_hgt_file(file_path)
+            
+            # Store the data without flipping individual tiles
+            tile_data[(lat, lon)] = {
+                'data': elevation_data,
+                'north': lat,
+                'south': lat - 1,
+                'west': lon,
+                'east': lon + 1
+            }
+        
+        # Find our tile dimensions
+        sample_data = next(iter(tile_data.values()))['data']
+        tile_height, tile_width = sample_data.shape
+        
+        # Initialize the merged grid (2x2 tiles)
+        merged_height = tile_height * 2  # 2 tiles vertically
+        merged_width = tile_width * 2    # 2 tiles horizontally
+        merged_data = np.zeros((merged_height, merged_width), dtype=np.float32)
+        
+        # Place each tile in its correct position
+        # Use the standard SRTM arrangement: N38 above N37, W123 left of W122
+        for (lat, lon), info in tile_data.items():
+            # Calculate row and column in the grid
+            # N38 goes in row 0 (top), N37 in row 1 (bottom)
+            row = 0 if lat == 38 else 1
+            # W123 goes in column 0 (left), W122 in column 1 (right)
+            col = 0 if lon == -123 else 1
+            
+            print(f"  Placing tile N{lat}W{-lon} at position ({row}, {col})")
+            
+            # Calculate the starting position in the merged grid
+            start_row = row * tile_height
+            start_col = col * tile_width
+            
+            # Place the data
+            merged_data[start_row:start_row + tile_height, start_col:start_col + tile_width] = info['data']
+        
+        # Flip the entire grid vertically to get north-up orientation
+        # This step makes North at the top and South at the bottom
+        print("  Applying vertical flip for north-up orientation")
+        merged_data = np.flipud(merged_data)
+        
+        return merged_data
+    
+    def _create_terrain_model_from_elevation(self, elevation_data, bounds, detail_level=0.2):
+        """
+        Create a 3D terrain model from elevation data.
+        
+        Args:
+            elevation_data (numpy.ndarray): 2D array of elevation values
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) of the region
+            detail_level (float): Detail level (1.0 = highest detail, lower values reduce detail)
+            
+        Returns:
+            trimesh.Trimesh: The generated terrain mesh
+        """
+        # Create a pronounced water mask (elevation <= 0 is water)
+        water_mask = elevation_data <= 0
+        water_coverage = water_mask.sum() / water_mask.size * 100
+        
+        print(f"Water coverage: {water_coverage:.1f}% of region")
+        
+        # Make water areas distinctly lower for better visualization
+        water_level = -15.0
+        elevation_data_with_water = elevation_data.copy()
+        elevation_data_with_water[water_mask] = water_level
+        
+        # Create distinct shores
+        shore_buffer = 1  # cells
+        shore_height = 1.0  # meters
+        
+        # Create a shore mask by dilating water areas slightly
+        shore_mask = binary_dilation(water_mask, iterations=shore_buffer) & ~water_mask
+        elevation_data_with_water[shore_mask] = shore_height
+        
+        # Convert geographic coordinates to Web Mercator
+        min_lon, min_lat, max_lon, max_lat = bounds
+        min_x, min_y = self.transformer.transform(min_lon, min_lat)
+        max_x, max_y = self.transformer.transform(max_lon, max_lat)
+        
+        # Calculate distances in meters
+        width_m = max_x - min_x
+        height_m = max_y - min_y
+        area_km2 = (width_m * height_m) / 1e6
+        
+        print(f"Area size: {area_km2:.1f} km²")
+        
+        # Calculate base resolution based on area size
+        base_resolution = max(90, area_km2 / 100)
+        actual_resolution = base_resolution / detail_level
+        print(f"Base resolution: {base_resolution:.1f}m, Detail-adjusted: {actual_resolution:.1f}m")
+        
+        # Calculate target number of vertices
+        target_vertices = int(width_m * height_m / (actual_resolution * actual_resolution))
+        target_vertices = min(target_vertices, 50000000)  # Cap at 50 million vertices
+        
+        # Calculate grid dimensions maintaining aspect ratio
+        aspect_ratio = width_m / height_m
+        cols = int(np.sqrt(target_vertices * aspect_ratio))
+        rows = int(np.sqrt(target_vertices / aspect_ratio))
+        
+        # Ensure minimum dimensions
+        cols = max(cols, 20)
+        rows = max(rows, 20)
+        
+        print(f"Grid dimensions: {rows}x{cols} ({rows*cols:,} vertices)")
+        
+        # Create vertex grid
+        x = np.linspace(min_x, max_x, cols)
+        y = np.linspace(min_y, max_y, rows)
+        x_grid, y_grid = np.meshgrid(x, y)
+        
+        # Resample elevation data to match grid dimensions
+        # Handle different aspect ratios between elevation data and target grid
+        elev_rows, elev_cols = elevation_data_with_water.shape
+        zoom_y = rows / elev_rows
+        zoom_x = cols / elev_cols
+        
+        # Use order=1 for linear interpolation to maintain water boundaries
+        resampled_data = zoom(elevation_data_with_water, (zoom_y, zoom_x), order=1)
+        
+        # Re-apply water mask after resampling to maintain clear water boundaries
+        resampled_water = resampled_data <= 0
+        resampled_data[resampled_water] = water_level
+        
+        # Create vertices array
+        vertices = np.column_stack((
+            x_grid.flatten(),
+            y_grid.flatten(),
+            resampled_data.flatten()
+        ))
+        
+        # Normalize XY coordinates while preserving aspect ratio
+        xy_scale = 1.0 / max(width_m, height_m)
+        vertices[:, 0] = (vertices[:, 0] - min_x) * xy_scale
+        vertices[:, 1] = (vertices[:, 1] - min_y) * xy_scale
+
+        # Scale the height to some proportion of the width
+        vertices[:, 2] = vertices[:, 2] / max(vertices[:, 2]) * 0.05
+        
+        # Create mesh faces
+        faces = []
+        for i in tqdm(range(rows - 1), desc="Creating surface triangles"):
+            for j in range(cols - 1):
+                v0 = i * cols + j
+                v1 = v0 + 1
+                v2 = (i + 1) * cols + j
+                v3 = v2 + 1
+                
+                # Correct winding order for proper rendering
+                faces.extend([
+                    [v0, v1, v2],
+                    [v1, v3, v2]
+                ])
+        
+        # Create base and sides
+        base_vertices = vertices.copy()
+        min_z = vertices[:, 2].min()
+        base_vertices[:, 2] = min_z - 0.01
+        
+        # Combine vertices
+        all_vertices = np.vstack([vertices, base_vertices])
+        vertex_count = rows * cols
+        
+        # Add side walls
+        for j in tqdm(range(cols - 1), desc="Creating walls"):
+            # Front edge (i=0)
+            v0, v1 = j, j+1
+            v0_base, v1_base = v0 + vertex_count, v1 + vertex_count
+            faces.extend([
+                [v0, v1, v0_base],
+                [v1, v1_base, v0_base]
+            ])
+            
+            # Back edge (i=rows-1)
+            v0 = (rows - 1) * cols + j
+            v1 = v0 + 1
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            faces.extend([
+                [v0, v1, v0_base],
+                [v1, v1_base, v0_base]
+            ])
+        
+        for i in range(rows - 1):
+            # Left edge (j=0)
+            v0 = i * cols
+            v1 = (i + 1) * cols
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            faces.extend([
+                [v0, v1, v0_base],
+                [v1, v1_base, v0_base]
+            ])
+            
+            # Right edge (j=cols-1)
+            v0 = i * cols + (cols - 1)
+            v1 = (i + 1) * cols + (cols - 1)
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            faces.extend([
+                [v0, v1, v0_base],
+                [v1, v1_base, v0_base]
+            ])
+        
+        # Add base face triangles
+        for i in range(rows - 1):
+            for j in range(cols - 1):
+                v0 = i * cols + j + vertex_count
+                v1 = v0 + 1
+                v2 = (i + 1) * cols + j + vertex_count
+                v3 = v2 + 1
+                faces.extend([
+                    [v0, v1, v2],
+                    [v1, v3, v2]
+                ])
+        
+        # Create mesh
+        faces = np.array(faces)
+        mesh = trimesh.Trimesh(vertices=all_vertices, faces=faces)
+        
+        # Fix normals for proper rendering
+        mesh.fix_normals()
+        
+        # Center the mesh
+        center = mesh.bounds.mean(axis=0)
+        mesh.vertices -= center
+        
+        # Scale to 1 meter length
+        scale_factor = 1.0 / max(mesh.extents)
+        mesh.apply_scale(scale_factor)
+
+        # Print dimensions of the mesh
+        print(f"Mesh dimensions: {mesh.bounds}")
+        
+        # Ensure proper orientation (Z-up) for Unity/other 3D software
+        # This rotates the model to have Z axis pointing up instead of Y axis
+        rotation = trimesh.transformations.rotation_matrix(
+            angle=-np.pi/2,
+            direction=[1, 0, 0],
+            point=[0, 0, 0]
+        )
+        mesh.apply_transform(rotation)
+        
+        return mesh
