@@ -901,7 +901,7 @@ class TerrainGenerator:
             water_mesh = trimesh.Trimesh(
                 vertices=vertices,
                 faces=water_faces_array,
-                face_colors=[0, 0, 128, 255]  # Dark blue color with alpha
+                face_colors=[27, 55, 97, 255]  # Dark blue color with alpha
             )
         
         if len(land_faces) > 0:
