@@ -39,10 +39,20 @@ def main():
                         help="Number of cells for shore buffer (default: 1)")
     parser.add_argument("--height-scale", type=float, default=0.05, 
                         help="Scale factor for height (default: 0.05)")
+    parser.add_argument("--water-thickness", type=float, default=0.0004, 
+                        help="Thickness of water layer in model units (default: 0.0004)")
     parser.add_argument("--debug", action="store_true",
                         help="Generate debug visualizations as JPG files")
+    parser.add_argument("--export-format", type=str, choices=["glb", "obj"], default="glb",
+                        help="Format to export the model (default: 'glb')")
+    parser.add_argument("--water-alpha", type=int, default=255, 
+                        help="Water transparency level (0-255, where 0 is transparent, 255 is opaque, default: 255)")
     
     args = parser.parse_args()
+
+    # Validate water alpha value
+    if args.water_alpha < 0 or args.water_alpha > 255:
+        parser.error("Water alpha must be between 0 and 255")
 
     # Create the terrain generator
     generator = TerrainGenerator()
@@ -66,7 +76,10 @@ def main():
         shore_height=args.shore_height,
         shore_buffer=args.shore_buffer,
         height_scale=args.height_scale,
-        debug=args.debug
+        water_thickness=args.water_thickness,
+        debug=args.debug,
+        export_format=args.export_format,
+        water_alpha=args.water_alpha
     )
 
     print("\nTerrain generation complete!")

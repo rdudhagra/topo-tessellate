@@ -502,9 +502,49 @@ class TerrainGenerator:
         except Exception as e:
             raise ValueError(f"Error exporting to GLB: {str(e)}")
 
+    def export_obj(self, scene, output_path):
+        """
+        Export scene to .obj format.
+        
+        Args:
+            scene (trimesh.Scene): The scene to export
+            output_path (str): Path for the output .obj file
+            
+        Raises:
+            ValueError: If export fails
+        """
+        try:
+            # Create the export directory if it doesn't exist
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            
+            # Export the scene
+            scene.export(output_path, file_type='obj')
+            print(f"Model exported to {output_path}")
+        except Exception as e:
+            raise ValueError(f"Error exporting to OBJ: {str(e)}")
+
+    def export_model(self, scene, output_path, export_format):
+        """
+        Export scene to the specified format.
+        
+        Args:
+            scene (trimesh.Scene): The scene to export
+            output_path (str): Path for the output file
+            export_format (str): Format to export ('glb' or 'obj')
+            
+        Raises:
+            ValueError: If export fails or format is not supported
+        """
+        if export_format.lower() == 'glb':
+            self.export_glb(scene, output_path)
+        elif export_format.lower() == 'obj':
+            self.export_obj(scene, output_path)
+        else:
+            raise ValueError(f"Unsupported export format: {export_format}. Supported formats are 'glb' and 'obj'.")
+
     def generate_terrain(self, bounds, topo_dir="topo", detail_level=0.2, output_prefix="terrain",
                        water_level=-15.0, shore_height=1.0, shore_buffer=1, height_scale=0.05,
-                       debug=False):
+                       water_thickness=0.0004, debug=False, export_format="glb", water_alpha=255):
         """
         Generate terrain model using SRTM data with proper north-up orientation.
         
@@ -518,6 +558,8 @@ class TerrainGenerator:
             shore_buffer (int): Number of cells for shore buffer
             height_scale (float): Scale factor for height relative to horizontal dimensions
             debug (bool): Whether to generate debug visualizations
+            export_format (str): Format to export ('glb' or 'obj', default: 'glb')
+            water_alpha (int): Alpha transparency value for water (0-255, default: 255)
             
         Returns:
             trimesh.Trimesh: The generated terrain mesh
@@ -552,7 +594,9 @@ class TerrainGenerator:
             water_level, 
             shore_height, 
             shore_buffer,
-            height_scale
+            height_scale,
+            water_thickness,
+            water_alpha
         )
         
         # Wait for debug visualizations to complete if they were requested
@@ -561,8 +605,8 @@ class TerrainGenerator:
             debug_executor.shutdown()
         
         # Export the model
-        output_path = f"{output_prefix}_{detail_level:.3f}.glb"
-        self.export_glb(scene, output_path)
+        output_path = f"{output_prefix}_{detail_level:.3f}.{export_format.lower()}"
+        self.export_model(scene, output_path, export_format)
         
         # Final performance report
         print(f"Total terrain generation pipeline time: {time.time() - total_start_time:.2f} seconds")
@@ -713,21 +757,51 @@ class TerrainGenerator:
         return water_faces, land_faces
     
     # Function for creating walls for a range (moved outside for multiprocessing)    
-    def _create_walls_for_range(self, start_idx, end_idx, is_columns=True, resampled_water_mask_flat=None, cols=None, vertex_count=None):
+    def _create_walls_for_range(self, start_idx, end_idx, is_columns=True, resampled_water_mask_flat=None, cols=None, vertex_count=None, for_water=False):
+        """
+        Create walls along the edges of the terrain for either water or land.
+        
+        Args:
+            start_idx (int): Starting index for processing
+            end_idx (int): Ending index for processing
+            is_columns (bool): Whether to process columns (True) or rows (False)
+            resampled_water_mask_flat (numpy.ndarray): Boolean array indicating water areas
+            cols (int): Number of columns in the grid
+            vertex_count (int): Number of vertices in the top mesh (used for offset)
+            for_water (bool): Whether to create walls for water (True) or land (False)
+            
+        Returns:
+            list: List of wall face indices (triangles)
+        """
         wall_faces = []
+        
+        # Get the correct mask based on whether we're creating water or land walls
+        # When creating water walls, we use the water mask
+        # When creating land walls, we use the inverted water mask (the land mask)
+        target_mask = resampled_water_mask_flat if for_water else ~resampled_water_mask_flat
         
         if is_columns:
             # Process columns (front and back walls)
             for j in range(start_idx, end_idx):
+                if j >= cols - 1:  # Ensure we don't go out of bounds
+                    continue
+                    
                 # Front edge (i=0)
                 v0, v1 = j, j+1
                 v0_base, v1_base = v0 + vertex_count, v1 + vertex_count
                 
-                if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                # Create wall for this edge if both vertices match our target (water or land)
+                # For the front and back edges, we want continuous walls rather than gaps
+                if target_mask[v0] and target_mask[v1]:
                     wall_faces.extend([
                         [v0, v1, v0_base],
                         [v1, v1_base, v0_base]
                     ])
+                # For transition edges where only one vertex matches, create a triangle
+                elif target_mask[v0] and not target_mask[v1]:
+                    wall_faces.append([v0, v0 + vertex_count, v1])
+                elif not target_mask[v0] and target_mask[v1]:
+                    wall_faces.append([v1, v0, v1 + vertex_count])
                 
                 # Back edge (i=rows-1)
                 v0 = (self.rows - 1) * cols + j
@@ -735,25 +809,40 @@ class TerrainGenerator:
                 v0_base = v0 + vertex_count
                 v1_base = v1 + vertex_count
                 
-                if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                # Create wall for this edge if both vertices match our target (water or land)
+                if target_mask[v0] and target_mask[v1]:
                     wall_faces.extend([
                         [v0, v1, v0_base],
                         [v1, v1_base, v0_base]
                     ])
+                # For transition edges where only one vertex matches, create a triangle
+                elif target_mask[v0] and not target_mask[v1]:
+                    wall_faces.append([v0, v0 + vertex_count, v1])
+                elif not target_mask[v0] and target_mask[v1]:
+                    wall_faces.append([v1, v0, v1 + vertex_count])
         else:
             # Process rows (left and right walls)
             for i in range(start_idx, end_idx):
+                if i >= self.rows - 1:  # Ensure we don't go out of bounds
+                    continue
+                    
                 # Left edge (j=0)
                 v0 = i * cols
                 v1 = (i + 1) * cols
                 v0_base = v0 + vertex_count
                 v1_base = v1 + vertex_count
                 
-                if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                # Create wall for this edge if both vertices match our target (water or land)
+                if target_mask[v0] and target_mask[v1]:
                     wall_faces.extend([
                         [v0, v1, v0_base],
                         [v1, v1_base, v0_base]
                     ])
+                # For transition edges where only one vertex matches, create a triangle
+                elif target_mask[v0] and not target_mask[v1]:
+                    wall_faces.append([v0, v0 + vertex_count, v1])
+                elif not target_mask[v0] and target_mask[v1]:
+                    wall_faces.append([v1, v0, v1 + vertex_count])
                 
                 # Right edge (j=cols-1)
                 v0 = i * cols + (cols - 1)
@@ -761,50 +850,116 @@ class TerrainGenerator:
                 v0_base = v0 + vertex_count
                 v1_base = v1 + vertex_count
                 
-                if not resampled_water_mask_flat[v0] and not resampled_water_mask_flat[v1]:
+                # Create wall for this edge if both vertices match our target (water or land)
+                if target_mask[v0] and target_mask[v1]:
                     wall_faces.extend([
                         [v0, v1, v0_base],
                         [v1, v1_base, v0_base]
                     ])
+                # For transition edges where only one vertex matches, create a triangle
+                elif target_mask[v0] and not target_mask[v1]:
+                    wall_faces.append([v0, v0 + vertex_count, v1])
+                elif not target_mask[v0] and target_mask[v1]:
+                    wall_faces.append([v1, v0, v1 + vertex_count])
         
         return wall_faces
     
     # Function for creating base faces for a chunk (moved outside for multiprocessing)
-    def _create_base_faces_for_chunk(self, start_row, end_row, cols, resampled_water_mask_flat, vertex_count):
+    def _create_base_faces_for_chunk(self, start_row, end_row, cols, resampled_water_mask_flat, vertex_count, for_water=False):
+        """
+        Create base faces (floor) for a chunk of the terrain.
+        
+        Args:
+            start_row (int): Starting row index
+            end_row (int): Ending row index
+            cols (int): Number of columns in the grid
+            resampled_water_mask_flat (numpy.ndarray): Boolean array indicating water areas
+            vertex_count (int): Number of vertices in the top mesh (used for offset)
+            for_water (bool): Whether to create base faces for water (True) or land (False)
+            
+        Returns:
+            list: List of base face indices (triangles)
+        """
         base_faces = []
+        
+        # Get the correct mask based on whether we're creating water or land base
+        # When creating water base, we use the water mask
+        # When creating land base, we use the inverted water mask (the land mask)
+        target_mask = resampled_water_mask_flat if for_water else ~resampled_water_mask_flat
         
         for i in range(start_row, end_row):
             for j in range(cols - 1):
-                v0 = i * cols + j + vertex_count
-                v1 = v0 + 1
-                v2 = (i + 1) * cols + j + vertex_count
-                v3 = v2 + 1
-                
                 # Skip if we're at the last row
                 if i >= self.rows - 1:
                     continue
                 
-                v0_orig = v0 - vertex_count
-                v1_orig = v1 - vertex_count
-                v2_orig = v2 - vertex_count
-                v3_orig = v3 - vertex_count
+                # Calculate corresponding top vertices indices (for water/land check)
+                v0_top = i * cols + j          # Top vertex
+                v1_top = v0_top + 1            # Top vertex
+                v2_top = (i + 1) * cols + j     # Top vertex
+                v3_top = v2_top + 1            # Top vertex
                 
-                if (not resampled_water_mask_flat[v0_orig - vertex_count] and 
-                    not resampled_water_mask_flat[v1_orig - vertex_count] and 
-                    not resampled_water_mask_flat[v2_orig - vertex_count] and 
-                    not resampled_water_mask_flat[v3_orig - vertex_count]):
+                # Calculate base vertices indices
+                v0 = v0_top + vertex_count  # Base vertex
+                v1 = v1_top + vertex_count  # Base vertex
+                v2 = v2_top + vertex_count  # Base vertex
+                v3 = v3_top + vertex_count  # Base vertex
+                
+                # Count vertices that match our target (water or land)
+                matching_vertices = sum([
+                    1 if target_mask[v0_top] else 0,
+                    1 if target_mask[v1_top] else 0,
+                    1 if target_mask[v2_top] else 0,
+                    1 if target_mask[v3_top] else 0
+                ])
+                
+                # For all matching or at least 3 matching vertices, create both triangles
+                if matching_vertices >= 3:
+                    # Add base triangles with proper winding order for base (reversed)
                     base_faces.extend([
-                        [v0, v2, v1],
-                        [v1, v2, v3]
+                        [v0, v2, v1],  # Base triangle 1
+                        [v1, v2, v3]   # Base triangle 2
                     ])
+                # For 2 matching vertices, we need to check the pattern and triangulate accordingly
+                elif matching_vertices == 2:
+                    # Check the pattern of matching vertices
+                    is_v0_matching = target_mask[v0_top]
+                    is_v1_matching = target_mask[v1_top]
+                    is_v2_matching = target_mask[v2_top]
+                    is_v3_matching = target_mask[v3_top]
+                    
+                    # Diagonal pattern (v0-v3 or v1-v2)
+                    if (is_v0_matching and is_v3_matching) or (is_v1_matching and is_v2_matching):
+                        # Split along appropriate diagonal to match surface triangulation
+                        if is_v0_matching and is_v3_matching:
+                            # If v0 and v3 match our target, create triangles that include them
+                            base_faces.append([v0, v2, v3])
+                        else:  # is_v1_matching and is_v2_matching
+                            # If v1 and v2 match our target, create triangle that includes them
+                            base_faces.append([v1, v2, v3])
+                    
+                    # Edge-adjacent pattern
+                    elif (is_v0_matching and is_v1_matching) or (is_v1_matching and is_v3_matching) or \
+                         (is_v3_matching and is_v2_matching) or (is_v2_matching and is_v0_matching):
+                        # Create single triangle for the matching vertices
+                        if is_v0_matching and is_v1_matching:
+                            base_faces.append([v0, v2, v1])
+                        elif is_v1_matching and is_v3_matching:
+                            base_faces.append([v1, v2, v3])
+                        elif is_v3_matching and is_v2_matching:
+                            base_faces.append([v1, v2, v3])
+                        elif is_v2_matching and is_v0_matching:
+                            base_faces.append([v0, v2, v1])
         
         return base_faces
     
     def _create_terrain_model_from_elevation(self, elevation_data, bounds, detail_level=0.2,
                                            water_level=-15.0, shore_height=1.0, shore_buffer=1,
-                                           height_scale=0.05):
+                                           height_scale=0.05, water_thickness=0.0004, water_alpha=255):
         """
         Create a 3D terrain model from elevation data using parallel processing.
+        
+        The land mesh covers the entire model, and water is a thin layer on top.
         
         Args:
             elevation_data (numpy.ndarray): 2D array of elevation values
@@ -814,14 +969,16 @@ class TerrainGenerator:
             shore_height (float): Elevation value for shore areas
             shore_buffer (int): Number of cells for shore buffer
             height_scale (float): Scale factor for height relative to horizontal dimensions
+            water_thickness (float): Thickness of water layer in model units
+            water_alpha (int): Alpha transparency value for water (0-255, default: 255)
             
         Returns:
-            trimesh.Scene: The generated terrain scene with water and land as separate meshes
+            trimesh.Scene: The generated terrain scene with water and land
         """
         start_time = time.time()
         print("Starting terrain model creation...")
         
-        # Create a pronounced water mask (elevation <= 0 is water)
+        # Create a water mask (elevation <= 0 is water)
         water_mask = elevation_data <= 0
         water_coverage = water_mask.sum() / water_mask.size * 100
         
@@ -882,186 +1039,232 @@ class TerrainGenerator:
         zoom_y = rows / elev_rows
         zoom_x = cols / elev_cols
         
-        # Use order=1 for linear interpolation to maintain water boundaries
+        # Use order=1 for linear interpolation
         print("Resampling elevation data...")
         resampling_start = time.time()
         resampled_data = zoom(elevation_data_with_water, (zoom_y, zoom_x), order=1)
         print(f"Resampling completed in {time.time() - resampling_start:.2f} seconds")
         
-        # Re-apply water mask after resampling to maintain clear water boundaries
-        resampled_water_mask = resampled_data <= 0
-        resampled_data[resampled_water_mask] = water_level
+        # Create a clean water mask
+        resampled_water_mask = resampled_data <= water_level
+        resampled_water_mask_flat = resampled_water_mask.flatten()
         
-        # Create vertices array
+        # Create vertices array for the land (covers entire terrain)
         print("Creating vertex array...")
         vertex_start = time.time()
-        vertices = np.column_stack((
+        land_vertices = np.column_stack((
             x_grid.flatten(),
             y_grid.flatten(),
             resampled_data.flatten()
         ))
+        
+        # Create water vertices - identical to land vertices but only for water areas
+        # and with a slight offset upward (water thickness)
+        water_vertices = land_vertices.copy()
+        
+        # Set the water top surface to be slightly above the water level
+        # This creates a thin water layer on top of the land
+        for i in range(len(water_vertices)):
+            if resampled_water_mask_flat[i]:
+                # Only adjust water vertices
+                # Water surface is at water_level + water_thickness
+                water_vertices[i, 2] = water_level + water_thickness
+                
         print(f"Vertex array created in {time.time() - vertex_start:.2f} seconds")
         
         # Normalize XY coordinates while preserving aspect ratio
         xy_scale = 1.0 / max(width_m, height_m)
-        vertices[:, 0] = (vertices[:, 0] - min_x) * xy_scale
-        vertices[:, 1] = (vertices[:, 1] - min_y) * xy_scale
+        land_vertices[:, 0] = (land_vertices[:, 0] - min_x) * xy_scale
+        land_vertices[:, 1] = (land_vertices[:, 1] - min_y) * xy_scale
+        
+        water_vertices[:, 0] = (water_vertices[:, 0] - min_x) * xy_scale
+        water_vertices[:, 1] = (water_vertices[:, 1] - min_y) * xy_scale
 
         # Scale the height to some proportion of the width using the height_scale parameter
-        vertices[:, 2] = vertices[:, 2] / max(vertices[:, 2]) * height_scale
+        land_vertices[:, 2] = land_vertices[:, 2] * height_scale / max(land_vertices[:, 2].max(), 1)
+        water_vertices[:, 2] = water_vertices[:, 2] * height_scale / max(water_vertices[:, 2].max(), 1)
         
-        # Create separate masks for water and land
-        vertex_count = rows * cols
-        resampled_water_mask_flat = resampled_water_mask.flatten()
+        # ----- Create land mesh (entire terrain) and water mesh (only water areas) -----
+        print("Generating terrain meshes...")
         
-        # ----- Create separate meshes for water and land using parallel processing -----
-        print("Generating terrain faces in parallel...")
-        
-        # Split the work into chunks based on available CPU cores
-        num_cores = multiprocessing.cpu_count()
-        chunk_size = max(1, (rows - 1) // num_cores)
-        chunks = [(i, min(i + chunk_size, rows - 1)) for i in range(0, rows - 1, chunk_size)]
-        
-        # Use ThreadPoolExecutor instead of ProcessPoolExecutor to avoid pickling issues
-        faces_start = time.time()
-        water_faces = []
+        # Create land faces (all quad cells become two triangles)
         land_faces = []
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_cores) as executor:
-            # Create a partial function with fixed arguments
-            create_faces_partial = partial(
-                self._create_faces_for_chunk, 
-                cols=cols, 
-                resampled_water_mask_flat=resampled_water_mask_flat
-            )
-            
-            # Execute in parallel
-            future_results = [executor.submit(create_faces_partial, start, end) for start, end in chunks]
-            
-            # Collect results
-            for future in concurrent.futures.as_completed(future_results):
-                chunk_water_faces, chunk_land_faces = future.result()
-                water_faces.extend(chunk_water_faces)
-                land_faces.extend(chunk_land_faces)
-        
-        print(f"Face generation completed in {time.time() - faces_start:.2f} seconds")
-        
-        # Create base and side walls for land (this part is less computationally intensive,
-        # so we'll keep it serial for now)
-        print("Creating base and walls...")
-        base_vertices = vertices.copy()
-        min_z = vertices[:, 2].min()
-        base_vertices[:, 2] = min_z - 0.01
-        
-        # Combine vertices
-        all_vertices = np.vstack([vertices, base_vertices])
-        
-        # Add side walls for the land mesh
-        wall_start = time.time()
-        
-        # Process side walls in parallel
-        
-        # Split wall work into chunks
-        col_chunks = [(i, min(i + chunk_size, cols - 1)) for i in range(0, cols - 1, chunk_size)]
-        row_chunks = [(i, min(i + chunk_size, rows - 1)) for i in range(0, rows - 1, chunk_size)]
-        
-        # Use ThreadPoolExecutor for walls
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_cores) as executor:
-            # Process column walls
-            col_wall_partial = partial(
-                self._create_walls_for_range, 
-                is_columns=True, 
-                resampled_water_mask_flat=resampled_water_mask_flat,
-                cols=cols,
-                vertex_count=vertex_count
-            )
-            col_futures = [executor.submit(col_wall_partial, start, end) for start, end in col_chunks]
-            
-            # Process row walls
-            row_wall_partial = partial(
-                self._create_walls_for_range, 
-                is_columns=False,
-                resampled_water_mask_flat=resampled_water_mask_flat,
-                cols=cols,
-                vertex_count=vertex_count
-            )
-            row_futures = [executor.submit(row_wall_partial, start, end) for start, end in row_chunks]
-            
-            # Collect results from all futures
-            for future in concurrent.futures.as_completed(col_futures + row_futures):
-                land_faces.extend(future.result())
-        
-        print(f"Wall creation completed in {time.time() - wall_start:.2f} seconds")
-        
-        # Add base face triangles for land in parallel
-        base_start = time.time()
+        for i in range(rows - 1):
+            for j in range(cols - 1):
+                v0 = i * cols + j
+                v1 = v0 + 1
+                v2 = (i + 1) * cols + j
+                v3 = v2 + 1
                 
-        # Use ThreadPoolExecutor for base faces
-        with concurrent.futures.ThreadPoolExecutor(max_workers=num_cores) as executor:
-            # Create a partial function with fixed arguments
-            create_base_faces_partial = partial(
-                self._create_base_faces_for_chunk, 
-                cols=cols, 
-                resampled_water_mask_flat=resampled_water_mask_flat,
-                vertex_count=vertex_count
-            )
-            
-            # Execute in parallel
-            base_futures = [executor.submit(create_base_faces_partial, start, end) for start, end in chunks]
-            
-            # Collect results
-            for future in concurrent.futures.as_completed(base_futures):
-                land_faces.extend(future.result())
+                # Add two triangles for each grid cell
+                land_faces.append([v0, v1, v2])
+                land_faces.append([v1, v3, v2])
         
-        print(f"Base triangle creation completed in {time.time() - base_start:.2f} seconds")
+        # Create water faces (only for water areas)
+        water_faces = []
+        for i in range(rows - 1):
+            for j in range(cols - 1):
+                v0 = i * cols + j
+                v1 = v0 + 1
+                v2 = (i + 1) * cols + j
+                v3 = v2 + 1
+                
+                # Only add faces if all four vertices are water
+                if (resampled_water_mask_flat[v0] and 
+                    resampled_water_mask_flat[v1] and 
+                    resampled_water_mask_flat[v2] and 
+                    resampled_water_mask_flat[v3]):
+                    
+                    water_faces.append([v0, v1, v2])
+                    water_faces.append([v1, v3, v2])
         
-        # Convert face lists to numpy arrays
-        print("Converting faces to arrays...")
-        array_start = time.time()
+        # Create base vertices at the bottom of the model for the land
+        land_base_vertices = land_vertices.copy()
+        min_z = land_vertices[:, 2].min()
+        land_base_vertices[:, 2] = min_z - 0.01  # Slightly below to ensure no z-fighting
+        
+        # Combine top and base vertices for the land
+        all_land_vertices = np.vstack([land_vertices, land_base_vertices])
+        vertex_count = rows * cols
+        
+        # Create land base faces
+        land_base_faces = []
+        for i in range(rows - 1):
+            for j in range(cols - 1):
+                v0 = i * cols + j + vertex_count  # Base vertex
+                v1 = v0 + 1                       # Base vertex
+                v2 = (i + 1) * cols + j + vertex_count  # Base vertex
+                v3 = v2 + 1                       # Base vertex
+                
+                # Add two triangles with inverted winding order
+                land_base_faces.append([v0, v2, v1])
+                land_base_faces.append([v1, v2, v3])
+        
+        # Add side walls to land
+        land_wall_faces = []
+        
+        # Front edge (i = 0)
+        for j in range(cols - 1):
+            v0 = j
+            v1 = j + 1
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            land_wall_faces.extend([
+                [v0, v1, v0_base],
+                [v1, v1_base, v0_base]
+            ])
+        
+        # Back edge (i = rows-1)
+        for j in range(cols - 1):
+            v0 = (rows - 1) * cols + j
+            v1 = v0 + 1
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            land_wall_faces.extend([
+                [v0, v1, v0_base],
+                [v1, v1_base, v0_base]
+            ])
+        
+        # Left edge (j = 0)
+        for i in range(rows - 1):
+            v0 = i * cols
+            v1 = (i + 1) * cols
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            land_wall_faces.extend([
+                [v0, v1, v0_base],
+                [v1, v1_base, v0_base]
+            ])
+        
+        # Right edge (j = cols-1)
+        for i in range(rows - 1):
+            v0 = i * cols + (cols - 1)
+            v1 = (i + 1) * cols + (cols - 1)
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            land_wall_faces.extend([
+                [v0, v1, v0_base],
+                [v1, v1_base, v0_base]
+            ])
+        
+        # Combine all land faces
+        all_land_faces = land_faces + land_wall_faces + land_base_faces
+        
+        # Convert to numpy arrays
+        land_faces_array = np.array(all_land_faces)
         water_faces_array = np.array(water_faces) if water_faces else np.empty((0, 3), dtype=np.int64)
-        land_faces_array = np.array(land_faces) if land_faces else np.empty((0, 3), dtype=np.int64)
-        print(f"Array conversion completed in {time.time() - array_start:.2f} seconds")
         
-        # Create separate meshes for water and land
-        print("Creating water and land meshes...")
+        # Create colors for land and water
+        land_color = [200, 200, 200, 255]  # Light gray
+        water_color = [27, 55, 97, water_alpha]  # Dark blue with configurable alpha
+        
+        # Create face colors
+        land_face_colors = np.ones((len(all_land_faces), 4), dtype=np.uint8) * land_color
+        water_face_colors = np.ones((len(water_faces), 4), dtype=np.uint8) * water_color if water_faces else None
+        
+        # Create meshes
+        print("Creating land and water meshes...")
         mesh_start = time.time()
+        
+        # Create the land mesh (covers entire terrain)
+        land_mesh = trimesh.Trimesh(
+            vertices=all_land_vertices,
+            faces=land_faces_array,
+            face_colors=land_face_colors,
+            process=False
+        )
+        
+        # Process the land mesh
+        try:
+            land_mesh.remove_duplicate_faces()
+            land_mesh.remove_infinite_values()
+            land_mesh.remove_degenerate_faces()
+            land_mesh.fix_normals(multibody=True)
+        except Exception as e:
+            print(f"Warning: Land mesh repair encountered an error: {str(e)}")
+            print("Attempting simplified repair...")
+            try:
+                land_mesh.process(validate=False)
+            except Exception as e2:
+                print(f"Warning: Simplified land mesh repair failed: {str(e2)}")
+        
+        # Create the water mesh (only water areas)
         water_mesh = None
-        land_mesh = None
-        
         if len(water_faces) > 0:
-            # Create water mesh with dark blue material
             water_mesh = trimesh.Trimesh(
-                vertices=vertices,
+                vertices=water_vertices,
                 faces=water_faces_array,
-                face_colors=[27, 55, 97, 255]  # Dark blue color with alpha
+                face_colors=water_face_colors,
+                process=False
             )
-        
-        if len(land_faces) > 0:
-            # Create land mesh with light gray material
-            land_mesh = trimesh.Trimesh(
-                vertices=all_vertices, 
-                faces=land_faces_array,
-                face_colors=[200, 200, 200, 255]  # Light gray color with alpha
-            )
+            
+            # Process the water mesh
+            try:
+                water_mesh.remove_duplicate_faces()
+                water_mesh.remove_infinite_values()
+                water_mesh.remove_degenerate_faces()
+                water_mesh.fix_normals(multibody=True)
+            except Exception as e:
+                print(f"Warning: Water mesh repair encountered an error: {str(e)}")
+                print("Attempting simplified repair...")
+                try:
+                    water_mesh.process(validate=False)
+                except Exception as e2:
+                    print(f"Warning: Simplified water mesh repair failed: {str(e2)}")
         
         print(f"Mesh creation completed in {time.time() - mesh_start:.2f} seconds")
         
         # Combine the meshes into a scene
         scene = trimesh.Scene()
         
+        # Add the land mesh first (it's the base)
+        scene.add_geometry(land_mesh, geom_name="land")
+        
+        # Add the water mesh on top if it exists
         if water_mesh is not None:
             scene.add_geometry(water_mesh, geom_name="water")
         
-        if land_mesh is not None:
-            scene.add_geometry(land_mesh, geom_name="land")
-        
-        # Fix normals on all meshes
-        normal_start = time.time()
-        for mesh in scene.geometry.values():
-            mesh.fix_normals()
-        print(f"Normal fixing completed in {time.time() - normal_start:.2f} seconds")
-        
-        # Center the scene - can't use centroid property directly
+        # Center the scene
         transform_start = time.time()
         scene_centroid = scene.centroid
         for mesh in scene.geometry.values():
@@ -1088,12 +1291,15 @@ class TerrainGenerator:
         print(f"Terrain model created with {len(scene.geometry)} geometries")
         for name, mesh in scene.geometry.items():
             print(f"  {name}: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
+            # Report status of boundaries
+            boundary_edges = mesh.edges_unique[mesh.edges_unique_length < 2]
+            print(f"  {name} mesh has {len(boundary_edges)} boundary edges")
         
         print(f"Total terrain generation time: {time.time() - start_time:.2f} seconds")
         
         # Return the scene object directly
         return scene
-
+    
     def _generate_debug_visualizations(self, elevation_data, bounds, output_prefix):
         """
         Generate and save debug visualizations for the terrain.
@@ -1235,3 +1441,106 @@ class TerrainGenerator:
         plt.close()
         
         print(f"3D elevation visualization saved to {output_path}")
+
+    def _create_internal_boundary_walls(self, water_mask_flat, cols, vertex_count):
+        """
+        Create walls along the internal boundaries between water and land.
+        
+        Args:
+            water_mask_flat (numpy.ndarray): Boolean array indicating water areas
+            cols (int): Number of columns in the grid
+            vertex_count (int): Number of vertices in the top mesh (used for offset)
+            
+        Returns:
+            tuple: (water_boundary_walls, land_boundary_walls) lists of face indices
+        """
+        water_boundary_walls = []
+        land_boundary_walls = []
+        
+        # Track boundary vertices to avoid duplicates
+        processed_edges = set()
+        
+        # Create a helper function to process each edge
+        def process_boundary_edge(v_a, v_b, v_a_base, v_b_base, is_v_a_water, is_v_b_water):
+            # Generate a unique edge ID (smallest vertex first to avoid duplicates)
+            edge_id = tuple(sorted([(v_a, v_a_base), (v_b, v_b_base)]))
+            
+            # Skip if we've already processed this edge
+            if edge_id in processed_edges:
+                return
+            
+            # Mark this edge as processed
+            processed_edges.add(edge_id)
+            
+            # Create triangular walls at the boundary
+            if is_v_a_water and not is_v_b_water:
+                # v_a is water, v_b is land
+                # Add a wall triangle for water mesh connecting vertices
+                water_boundary_walls.append([v_a, v_a_base, v_b])
+                water_boundary_walls.append([v_a_base, v_b_base, v_b])
+                
+                # Add a matching wall triangle for land mesh
+                land_boundary_walls.append([v_b, v_a, v_b_base])
+                land_boundary_walls.append([v_a, v_a_base, v_b_base])
+            elif not is_v_a_water and is_v_b_water:
+                # v_a is land, v_b is water
+                # Add a wall triangle for land mesh connecting vertices
+                land_boundary_walls.append([v_a, v_a_base, v_b])
+                land_boundary_walls.append([v_a_base, v_b_base, v_b])
+                
+                # Add a matching wall triangle for water mesh
+                water_boundary_walls.append([v_b, v_a, v_b_base])
+                water_boundary_walls.append([v_a, v_a_base, v_b_base])
+        
+        # Find edges that are between water and land
+        for i in range(self.rows):
+            for j in range(cols):
+                v0 = i * cols + j
+                
+                # Skip boundary vertices
+                if i == self.rows - 1 or j == cols - 1:
+                    continue
+                
+                # Get neighboring vertices
+                v1 = v0 + 1               # Right neighbor
+                v2 = (i + 1) * cols + j   # Bottom neighbor
+                v3 = v2 + 1               # Bottom-right neighbor
+                
+                # Get corresponding base vertices
+                v0_base = v0 + vertex_count
+                v1_base = v1 + vertex_count
+                v2_base = v2 + vertex_count
+                v3_base = v3 + vertex_count
+                
+                # Check water status
+                is_v0_water = water_mask_flat[v0]
+                is_v1_water = water_mask_flat[v1]
+                is_v2_water = water_mask_flat[v2]
+                is_v3_water = water_mask_flat[v3]
+                
+                # Check each of the four edges of this quad for water-land boundaries
+                
+                # Horizontal edges
+                if is_v0_water != is_v1_water:
+                    process_boundary_edge(v0, v1, v0_base, v1_base, is_v0_water, is_v1_water)
+                    
+                if is_v2_water != is_v3_water:
+                    process_boundary_edge(v2, v3, v2_base, v3_base, is_v2_water, is_v3_water)
+                
+                # Vertical edges
+                if is_v0_water != is_v2_water:
+                    process_boundary_edge(v0, v2, v0_base, v2_base, is_v0_water, is_v2_water)
+                    
+                if is_v1_water != is_v3_water:
+                    process_boundary_edge(v1, v3, v1_base, v3_base, is_v1_water, is_v3_water)
+                
+                # Diagonal edges - only add these if needed to close gaps
+                # Check if opposite corners have different water status but edges don't capture this transition
+                if is_v0_water != is_v3_water and (is_v0_water == is_v1_water == is_v2_water or is_v1_water == is_v2_water == is_v3_water):
+                    process_boundary_edge(v0, v3, v0_base, v3_base, is_v0_water, is_v3_water)
+                    
+                if is_v1_water != is_v2_water and (is_v0_water == is_v1_water == is_v3_water or is_v0_water == is_v2_water == is_v3_water):
+                    process_boundary_edge(v1, v2, v1_base, v2_base, is_v1_water, is_v2_water)
+        
+        print(f"Created {len(processed_edges)} unique boundary edges between water and land")
+        return water_boundary_walls, land_boundary_walls
