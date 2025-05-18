@@ -925,8 +925,10 @@ class TerrainGenerator:
         for mesh in scene.geometry.values():
             mesh.fix_normals()
         
-        # Center the scene
-        scene.centroid = [0, 0, 0]
+        # Center the scene - can't use centroid property directly
+        scene_centroid = scene.centroid
+        for mesh in scene.geometry.values():
+            mesh.vertices -= scene_centroid
         
         # Scale to a standard size
         scale_factor = 1.0 / max(scene.extents)
