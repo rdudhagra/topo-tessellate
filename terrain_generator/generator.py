@@ -1220,6 +1220,10 @@ class TerrainGenerator:
             land_mesh.remove_infinite_values()
             land_mesh.remove_degenerate_faces()
             land_mesh.fix_normals(multibody=True)
+            trimesh.repair.fix_inversion(land_mesh, True)
+            trimesh.repair.fix_winding(land_mesh)
+            trimesh.repair.broken_faces(land_mesh)
+            trimesh.repair.fill_holes(land_mesh)
         except Exception as e:
             print(f"Warning: Land mesh repair encountered an error: {str(e)}")
             print("Attempting simplified repair...")
@@ -1244,6 +1248,10 @@ class TerrainGenerator:
                 water_mesh.remove_infinite_values()
                 water_mesh.remove_degenerate_faces()
                 water_mesh.fix_normals(multibody=True)
+                trimesh.repair.fix_inversion(water_mesh, True)
+                trimesh.repair.fix_winding(water_mesh)
+                trimesh.repair.broken_faces(water_mesh)
+                trimesh.repair.fill_holes(water_mesh)
             except Exception as e:
                 print(f"Warning: Water mesh repair encountered an error: {str(e)}")
                 print("Attempting simplified repair...")
