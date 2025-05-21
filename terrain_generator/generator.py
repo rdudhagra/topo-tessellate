@@ -1061,6 +1061,7 @@ class TerrainGenerator:
         # Create water vertices - identical to land vertices but only for water areas
         # and with a slight offset upward (water thickness)
         water_vertices = land_vertices.copy()
+        water_base_vertices = land_vertices.copy()
         
         # Set the water top surface to be slightly above the water level
         # This creates a thin water layer on top of the land
@@ -1069,7 +1070,11 @@ class TerrainGenerator:
                 # Only adjust water vertices
                 # Water surface is at water_level + water_thickness
                 water_vertices[i, 2] = water_level + water_thickness
-                
+                water_base_vertices[i, 2] = water_level
+
+        # Combine top and base vertices for the water
+        water_vertices = np.vstack([water_vertices, water_base_vertices])
+        
         print(f"Vertex array created in {time.time() - vertex_start:.2f} seconds")
         
         # Normalize XY coordinates while preserving aspect ratio

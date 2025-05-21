@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 
 import argparse
-from terrain_generator.generator import TerrainGenerator
+from terrain_generator.cq_generator import CQTerrainGenerator
 import os
 
 
 def main():
     """
-    Generate terrain models using TerrainGenerator.
+    Generate terrain models using CadQuery-based TerrainGenerator.
     """
-    print("CityModelGenerator - World to Model")
+    print("CityModelGenerator - World to Model (CadQuery Edition)")
 
     # Set up the argument parser
-    parser = argparse.ArgumentParser(description="Generate 3D terrain models from SRTM elevation data")
+    parser = argparse.ArgumentParser(description="Generate 3D CAD terrain models from SRTM elevation data")
     
     # Required arguments
     parser.add_argument("--min-lon", type=float, required=True, 
@@ -31,37 +31,23 @@ def main():
                         help="Level of detail, 0.01-1.0 (default: 0.2)")
     parser.add_argument("--output-prefix", type=str, default="terrain", 
                         help="Prefix for output files (default: 'terrain')")
-    parser.add_argument("--water-level", type=float, default=-15.0, 
-                        help="Elevation value for water areas (default: -15.0)")
-    parser.add_argument("--shore-height", type=float, default=1.0, 
-                        help="Elevation value for shore areas (default: 1.0)")
-    parser.add_argument("--shore-buffer", type=int, default=1, 
-                        help="Number of cells for shore buffer (default: 1)")
+    parser.add_argument("--water-level", type=float, default=0.0, 
+                        help="Elevation value for water areas (default: 0.0)")
     parser.add_argument("--height-scale", type=float, default=0.05, 
                         help="Scale factor for height (default: 0.05)")
-    parser.add_argument("--water-thickness", type=float, default=0.0004, 
-                        help="Thickness of water layer in model units (default: 0.0004)")
-    parser.add_argument("--debug", action="store_true",
-                        help="Generate debug visualizations as JPG files")
-    parser.add_argument("--export-format", type=str, choices=["glb", "obj"], default="glb",
-                        help="Format to export the model (default: 'glb')")
-    parser.add_argument("--water-alpha", type=int, default=255, 
-                        help="Water transparency level (0-255, where 0 is transparent, 255 is opaque, default: 255)")
+    parser.add_argument("--export-format", type=str, choices=["step", "stl", "3mf"], default="step",
+                        help="Format to export the model (default: 'step')")
     
     args = parser.parse_args()
 
-    # Validate water alpha value
-    if args.water_alpha < 0 or args.water_alpha > 255:
-        parser.error("Water alpha must be between 0 and 255")
-
     # Create the terrain generator
-    generator = TerrainGenerator()
+    generator = CQTerrainGenerator()
 
     # Construct bounds tuple from arguments
     bounds = (args.min_lon, args.min_lat, args.max_lon, args.max_lat)
     
     # Generate terrain model with the specified parameters
-    print(f"\nGenerating terrain model for region: {bounds}...")
+    print(f"\nGenerating CAD terrain model for region: {bounds}...")
     
     # Reference bounds for the San Francisco Bay Area:
     # San Francisco Bay Area bounds: (-122.673340, 37.225955, -121.753235, 38.184228)
@@ -73,13 +59,8 @@ def main():
         detail_level=args.detail_level,
         output_prefix=args.output_prefix,
         water_level=args.water_level,
-        shore_height=args.shore_height,
-        shore_buffer=args.shore_buffer,
         height_scale=args.height_scale,
-        water_thickness=args.water_thickness,
-        debug=args.debug,
-        export_format=args.export_format,
-        water_alpha=args.water_alpha
+        export_format=args.export_format
     )
 
     print("\nTerrain generation complete!")
