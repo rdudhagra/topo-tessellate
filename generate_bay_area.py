@@ -23,8 +23,8 @@ def generate_terrain():
         mesh = generator.generate_terrain_model(
             bounds=bounds,
             topo_dir="topo",
-            base_height=0.1,
-            elevation_scale_ratio=0.0005,
+            base_height=2.5,
+            elevation_scale_ratio=0.05,
             downsample_factor=25,
             output_prefix="bay_area_terrain",
         )

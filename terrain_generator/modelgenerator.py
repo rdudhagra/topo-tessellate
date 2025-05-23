@@ -57,7 +57,7 @@ class ModelGenerator:
         
         return downsampled
     
-    def create_mesh_from_elevation(self, elevation_data, base_height=1.0, scale_factor=1.0, 
+    def create_mesh_from_elevation(self, elevation_data, base_height=1.0, 
                                  elevation_scale_ratio=0.02):
         """
         Create a 3D mesh from elevation data with a flat base using meshlib.
@@ -65,7 +65,6 @@ class ModelGenerator:
         Args:
             elevation_data (numpy.ndarray): 2D array of elevation values
             base_height (float): Height of the flat base
-            scale_factor (float): Scale factor for the mesh coordinates
             elevation_scale_ratio (float): Ratio of elevation scale to max(width, length)
             
         Returns:
@@ -74,13 +73,19 @@ class ModelGenerator:
         height, width = elevation_data.shape
         max_dimension = max(width, height)
         
-        # Calculate elevation scaling based on max dimension
+        # Fixed scale factor (no longer parameterized)
+        scale_factor = 1.0
+        
+        # Calculate elevation scaling based on actual world coordinates, not grid dimensions
+        max_world_dimension = max_dimension * scale_factor
         elevation_range = elevation_data.max() - elevation_data.min()
         if elevation_range > 0:
-            elevation_scale = (max_dimension * elevation_scale_ratio) / elevation_range
+            elevation_scale = (max_world_dimension * elevation_scale_ratio) / elevation_range
         else:
             elevation_scale = 1.0
             
+        print(f"Grid dimensions: {width}x{height}")
+        print(f"World dimensions: {width * scale_factor:.3f} x {height * scale_factor:.3f}")
         print(f"Elevation scaling: {elevation_scale:.6f} (ratio: {elevation_scale_ratio})")
         print(f"Elevation range: {elevation_data.min():.1f} to {elevation_data.max():.1f}")
         
@@ -218,7 +223,7 @@ class ModelGenerator:
             print(f"Failed to save mesh to: {filename} - Error: {e}")
     
     def generate_terrain_model(self, bounds, topo_dir="topo", base_height=1.0, 
-                             scale_factor=1.0, elevation_scale_ratio=0.02,
+                             elevation_scale_ratio=0.02,
                              downsample_factor=10, output_prefix="terrain_model"):
         """
         Generate a 3D terrain model from SRTM elevation data.
@@ -227,7 +232,6 @@ class ModelGenerator:
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
             topo_dir (str): Directory containing SRTM data files
             base_height (float): Height of the flat base
-            scale_factor (float): Scale factor for the mesh coordinates
             elevation_scale_ratio (float): Ratio of elevation scale to max(width, length) (default: 0.02)
             downsample_factor (int): Factor to downsample elevation data (default: 10)
             output_prefix (str): Prefix for output filename
@@ -238,7 +242,6 @@ class ModelGenerator:
         print("=== Terrain Model Generation ===")
         print(f"Bounds: {bounds}")
         print(f"Base height: {base_height}")
-        print(f"Scale factor: {scale_factor}")
         print(f"Elevation scale ratio: {elevation_scale_ratio}")
         print(f"Downsample factor: {downsample_factor}")
         
@@ -258,7 +261,7 @@ class ModelGenerator:
         
         # Create 3D mesh from elevation data
         print("Creating 3D mesh from elevation data...")
-        mesh = self.create_mesh_from_elevation(elevation_data, base_height, scale_factor, elevation_scale_ratio)
+        mesh = self.create_mesh_from_elevation(elevation_data, base_height, elevation_scale_ratio)
         
         # Save the mesh as OBJ file only
         output_file = f"{output_prefix}.obj"
@@ -290,7 +293,6 @@ def main():
         bounds=bounds,
         topo_dir="topo",
         base_height=10.0,           # 10 unit base height
-        scale_factor=0.01,          # Scale down coordinates
         elevation_scale_ratio=0.02, # Default elevation scaling
         downsample_factor=10,       # Default downsampling
         output_prefix="example_terrain"
