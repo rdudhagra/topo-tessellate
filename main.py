@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-from terrain_generator.cq_generator import CQTerrainGenerator
+from terrain_generator.generator import TerrainGenerator
 import os
 
 
@@ -9,7 +9,7 @@ def main():
     """
     Generate terrain models using CadQuery-based TerrainGenerator.
     """
-    print("CityModelGenerator - World to Model (CadQuery Edition)")
+    print("TerrainGenerator - World to Model")
 
     # Set up the argument parser
     parser = argparse.ArgumentParser(description="Generate 3D CAD terrain models from SRTM elevation data")
@@ -35,13 +35,13 @@ def main():
                         help="Elevation value for water areas (default: 0.0)")
     parser.add_argument("--height-scale", type=float, default=0.05, 
                         help="Scale factor for height (default: 0.05)")
-    parser.add_argument("--export-format", type=str, choices=["step", "stl", "3mf"], default="step",
-                        help="Format to export the model (default: 'step')")
+    parser.add_argument("--export-format", type=str, choices=["glb", "obj"], default="glb",
+                        help="Format to export the model (default: 'glb')")
     
     args = parser.parse_args()
 
     # Create the terrain generator
-    generator = CQTerrainGenerator()
+    generator = TerrainGenerator()
 
     # Construct bounds tuple from arguments
     bounds = (args.min_lon, args.min_lat, args.max_lon, args.max_lat)
