@@ -827,8 +827,8 @@ class TerrainGenerator:
             np.ones((len(all_land_faces), 4), dtype=np.uint8) * land_color
         )
         water_face_colors = (
-            np.ones((len(water_faces), 4), dtype=np.uint8) * water_color
-            if water_faces
+            np.ones((len(all_water_faces), 4), dtype=np.uint8) * water_color
+            if all_water_faces
             else None
         )
 
