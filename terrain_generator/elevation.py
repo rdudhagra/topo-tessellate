@@ -155,6 +155,9 @@ class ElevationMap:
         # Stitch the tiles with standard SRTM arrangement
         elevation_data = self._stitch_srtm_tiles(tile_files)
 
+        # Crop the stitched tiles to the bounds
+        elevation_data = self._crop_elevation_data(elevation_data, bounds)
+
         return elevation_data
 
     # Function to read a single tile (moved outside for multiprocessing)
@@ -249,3 +252,40 @@ class ElevationMap:
         merged_data = np.flipud(merged_data)
 
         return merged_data
+
+    def _crop_elevation_data(self, elevation_data, bounds):
+        """
+        Crop the elevation data to the given bounds.
+
+        Args:
+            elevation_data (numpy.ndarray): The elevation data to crop
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat)
+        """
+
+        # Convert bounds to x, y coordinates
+        min_lon, min_lat, max_lon, max_lat = bounds
+
+        min_x, min_y = self.transformer.transform(min_lon, min_lat)
+        max_x, max_y = self.transformer.transform(max_lon, max_lat)
+
+        # Convert SRTM bounds to x, y coordinates
+        srtm_min_lon, srtm_min_lat = np.floor(min_lon), np.floor(min_lat)
+        srtm_max_lon, srtm_max_lat = np.ceil(max_lon), np.ceil(max_lat)
+
+        srtm_min_x, srtm_min_y = self.transformer.transform(srtm_min_lon, srtm_min_lat)
+        srtm_max_x, srtm_max_y = self.transformer.transform(srtm_max_lon, srtm_max_lat)
+
+        # Calculate the scale of the elevation data
+        elevation_data_num_rows, elevation_data_num_cols = elevation_data.shape
+
+        x_scale = elevation_data_num_cols / (srtm_max_x - srtm_min_x)
+        y_scale = elevation_data_num_rows / (srtm_max_y - srtm_min_y)
+
+        # Calculate the indices of the elevation data to crop
+        elevation_data_min_index_x = int((min_x - srtm_min_x) * x_scale)
+        elevation_data_min_index_y = int((min_y - srtm_min_y) * y_scale)
+
+        elevation_data_max_index_x = elevation_data_num_cols - int((srtm_max_x - max_x) * x_scale)
+        elevation_data_max_index_y = elevation_data_num_rows - int((srtm_max_y - max_y) * y_scale)
+
+        return elevation_data[elevation_data_min_index_y:elevation_data_max_index_y, elevation_data_min_index_x:elevation_data_max_index_x]

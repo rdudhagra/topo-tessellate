@@ -25,7 +25,7 @@ def generate_terrain():
             topo_dir="topo",
             base_height=2.5,
             elevation_scale_ratio=0.05,
-            downsample_factor=25,
+            downsample_factor=5,
             output_prefix="bay_area_terrain",
         )
 
