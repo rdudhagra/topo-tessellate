@@ -341,7 +341,7 @@ class TerrainGenerator:
         shore_height=1.0,
         shore_buffer=1,
         height_scale=0.05,
-        water_thickness=0.0004,
+        water_thickness=100,
         debug=False,
         export_format="glb",
         water_alpha=255,
@@ -525,7 +525,7 @@ class TerrainGenerator:
         shore_height=1.0,
         shore_buffer=1,
         height_scale=0.05,
-        water_thickness=0.0004,
+        water_thickness=100,
         water_alpha=255,
     ):
         """
@@ -634,8 +634,7 @@ class TerrainGenerator:
 
         # Create water vertices - identical to land vertices but only for water areas
         # and with a slight offset upward (water thickness)
-        water_vertices = land_vertices.copy()
-        water_base_vertices = land_vertices.copy()
+        water_vertices = np.array(land_vertices)
 
         # Set the water top surface to be slightly above the water level
         # This creates a thin water layer on top of the land
@@ -644,10 +643,7 @@ class TerrainGenerator:
                 # Only adjust water vertices
                 # Water surface is at water_level + water_thickness
                 water_vertices[i, 2] = water_level + water_thickness
-                water_base_vertices[i, 2] = water_level
-
-        # Combine top and base vertices for the water
-        water_vertices = np.vstack([water_vertices, water_base_vertices])
+                land_vertices[i, 2] = water_level
 
         print(f"Vertex array created in {time.time() - vertex_start:.2f} seconds")
 
@@ -765,11 +761,62 @@ class TerrainGenerator:
         # Combine all land faces
         all_land_faces = land_faces + land_wall_faces + land_base_faces
 
+        # Create base vertices for the water
+        water_base_vertices = water_vertices.copy()
+        water_base_vertices[:, 2] = water_level
+
+        # Combine top and base vertices for the water
+        all_water_vertices = np.vstack([water_vertices, water_base_vertices])
+
+        # Create water base faces
+        water_base_faces = []
+        for i in range(rows - 1):
+            for j in range(cols - 1):
+                v0 = i * cols + j + vertex_count  # Base vertex
+                v1 = v0 + 1  # Base vertex
+                v2 = (i + 1) * cols + j + vertex_count  # Base vertex
+
+        # Add side walls to water
+        water_wall_faces = []
+
+        # Front edge (i = 0)
+        for j in range(cols - 1):
+            v0 = j
+            v1 = j + 1
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            water_wall_faces.extend([[v0, v1, v0_base], [v1, v1_base, v0_base]])
+
+        # Back edge (i = rows-1)
+        for j in range(cols - 1):
+            v0 = (rows - 1) * cols + j
+            v1 = v0 + 1
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            water_wall_faces.extend([[v0, v1, v0_base], [v1, v1_base, v0_base]])
+
+        # Left edge (j = 0)
+        for i in range(rows - 1):
+            v0 = i * cols
+            v1 = (i + 1) * cols
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            water_wall_faces.extend([[v0, v1, v0_base], [v1, v1_base, v0_base]])
+
+        # Right edge (j = cols-1)
+        for i in range(rows - 1):
+            v0 = i * cols + (cols - 1)
+            v1 = (i + 1) * cols + (cols - 1)
+            v0_base = v0 + vertex_count
+            v1_base = v1 + vertex_count
+            water_wall_faces.extend([[v0, v1, v0_base], [v1, v1_base, v0_base]])
+
+        # Combine all water faces
+        all_water_faces = water_faces + water_wall_faces + water_base_faces
+
         # Convert to numpy arrays
         land_faces_array = np.array(all_land_faces)
-        water_faces_array = (
-            np.array(water_faces) if water_faces else np.empty((0, 3), dtype=np.int64)
-        )
+        water_faces_array = np.array(all_water_faces)
 
         # Create colors for land and water
         land_color = [200, 200, 200, 255]  # Light gray
@@ -817,10 +864,10 @@ class TerrainGenerator:
 
         # Create the water mesh (only water areas)
         water_mesh = None
-        if len(water_faces) > 0:
+        if len(all_water_faces) > 0:
             water_mesh = trimesh.Trimesh(
-                vertices=water_vertices,
-                faces=water_faces_array,
+                vertices=all_water_vertices,
+                faces=all_water_faces,
                 face_colors=water_face_colors,
                 process=False,
             )
