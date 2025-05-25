@@ -135,19 +135,20 @@ class ModelGenerator:
         
         return final_water_mask
     
-    def _create_water_mesh(self, water_mask, bounds, water_level, base_height=1.0, elevation_multiplier=1.0):
+    def _create_water_mesh(self, water_mask, bounds, water_level, water_depth, base_height=1.0, elevation_multiplier=1.0):
         """
-        Create a separate mesh for water areas.
+        Create a thickened mesh for water areas with proper volume.
         
         Args:
             water_mask (numpy.ndarray): Boolean mask indicating water areas
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
             water_level (float): Elevation level for water surface
+            water_depth (float): Thickness/depth of water volume
             base_height (float): Height of the base
             elevation_multiplier (float): Elevation scaling multiplier
             
         Returns:
-            meshlib.mrmeshpy.Mesh: Water mesh
+            meshlib.mrmeshpy.Mesh: Thickened water mesh with volume
         """
         height, width = water_mask.shape
         
@@ -156,54 +157,123 @@ class ModelGenerator:
         scale_x = width_meters / width
         scale_y = height_meters / height
         
-        # Convert water level to model units
-        water_z = water_level * elevation_multiplier + base_height
+        # Convert water levels to model units
+        top_z = water_level * elevation_multiplier + base_height
+        bottom_z = (water_level - water_depth) * elevation_multiplier + base_height
         
         vertices = []
         faces = []
         
-        # Create water surface vertices and faces for each water pixel
+        # Create vertex index maps for top and bottom surfaces
+        top_vertex_indices = {}
+        bottom_vertex_indices = {}
+        
+        # Step 1: Create vertices for all water pixels
+        vertex_count = 0
+        for y in range(height):
+            for x in range(width):
+                if water_mask[y, x]:
+                    px = x * scale_x
+                    py = y * scale_y
+                    
+                    # Top surface vertex
+                    vertices.append([px, py, top_z])
+                    top_vertex_indices[(y, x)] = vertex_count
+                    vertex_count += 1
+                    
+                    # Bottom surface vertex  
+                    vertices.append([px, py, bottom_z])
+                    bottom_vertex_indices[(y, x)] = vertex_count
+                    vertex_count += 1
+        
+        # Step 2: Create top surface faces
         for y in range(height - 1):
             for x in range(width - 1):
-                # Check if this quad has any water
-                quad_water = (water_mask[y, x] or water_mask[y, x+1] or 
-                             water_mask[y+1, x] or water_mask[y+1, x+1])
+                # Check all 4 corners of this quad
+                corners = [(y, x), (y, x+1), (y+1, x), (y+1, x+1)]
+                water_corners = [water_mask[cy, cx] for cy, cx in corners]
                 
-                if quad_water:
-                    # Calculate vertex positions
-                    v_indices = []
+                if all(water_corners):
+                    # All 4 corners are water - create 2 triangles
+                    v0 = top_vertex_indices[(y, x)]      # bottom-left
+                    v1 = top_vertex_indices[(y, x+1)]    # bottom-right
+                    v2 = top_vertex_indices[(y+1, x)]    # top-left
+                    v3 = top_vertex_indices[(y+1, x+1)]  # top-right
                     
-                    # Create vertices for this quad
-                    quad_positions = [
-                        (x * scale_x, y * scale_y),           # bottom-left
-                        ((x+1) * scale_x, y * scale_y),       # bottom-right
-                        (x * scale_x, (y+1) * scale_y),       # top-left
-                        ((x+1) * scale_x, (y+1) * scale_y)    # top-right
-                    ]
+                    # Counter-clockwise winding for upward normal
+                    faces.append([v0, v1, v2])
+                    faces.append([v1, v3, v2])
+        
+        # Step 3: Create bottom surface faces (flipped normals)
+        for y in range(height - 1):
+            for x in range(width - 1):
+                corners = [(y, x), (y, x+1), (y+1, x), (y+1, x+1)]
+                water_corners = [water_mask[cy, cx] for cy, cx in corners]
+                
+                if all(water_corners):
+                    v0 = bottom_vertex_indices[(y, x)]      # bottom-left
+                    v1 = bottom_vertex_indices[(y, x+1)]    # bottom-right
+                    v2 = bottom_vertex_indices[(y+1, x)]    # top-left
+                    v3 = bottom_vertex_indices[(y+1, x+1)]  # top-right
                     
-                    # Add vertices only if they correspond to water pixels
-                    for i, (px, py) in enumerate(quad_positions):
-                        grid_y = y if i < 2 else y + 1
-                        grid_x = x if i % 2 == 0 else x + 1
+                    # Clockwise winding for downward normal (when viewed from above)
+                    faces.append([v0, v2, v1])
+                    faces.append([v1, v2, v3])
+        
+        # Step 4: Create side walls by finding boundary edges
+        # For each water pixel, check its 4 neighbors and create side walls where needed
+        for y in range(height):
+            for x in range(width):
+                if water_mask[y, x]:
+                    # Check each of the 4 directions for boundary edges
+                    
+                    # North edge (top of pixel)
+                    if (y == 0 or not water_mask[y-1, x]) and x < width - 1 and water_mask[y, x+1]:
+                        # This pixel and its right neighbor both have water, and there's a boundary to the north
+                        tl = top_vertex_indices[(y, x)]
+                        tr = top_vertex_indices[(y, x+1)]
+                        bl = bottom_vertex_indices[(y, x)]
+                        br = bottom_vertex_indices[(y, x+1)]
                         
-                        if water_mask[grid_y, grid_x]:
-                            vertices.append([px, py, water_z])
-                            v_indices.append(len(vertices) - 1)
-                        else:
-                            v_indices.append(-1)  # Mark as invalid
+                        # Create outward-facing quad (normal points north)
+                        faces.append([tl, bl, tr])
+                        faces.append([bl, br, tr])
                     
-                    # Create triangles if we have enough valid vertices
-                    valid_vertices = [i for i in v_indices if i >= 0]
-                    if len(valid_vertices) >= 3:
-                        # Simple triangulation of the quad
-                        if len(valid_vertices) == 4:
-                            # Full quad - create two triangles
-                            if all(v >= 0 for v in v_indices):
-                                faces.append([v_indices[0], v_indices[1], v_indices[2]])
-                                faces.append([v_indices[1], v_indices[3], v_indices[2]])
-                        elif len(valid_vertices) == 3:
-                            # Triangle
-                            faces.append(valid_vertices)
+                    # South edge (bottom of pixel)
+                    if (y == height - 1 or not water_mask[y+1, x]) and x < width - 1 and water_mask[y, x+1]:
+                        # This pixel and its right neighbor both have water, and there's a boundary to the south
+                        tl = top_vertex_indices[(y, x)]
+                        tr = top_vertex_indices[(y, x+1)]
+                        bl = bottom_vertex_indices[(y, x)]
+                        br = bottom_vertex_indices[(y, x+1)]
+                        
+                        # Create outward-facing quad (normal points south)
+                        faces.append([tl, tr, bl])
+                        faces.append([bl, tr, br])
+                    
+                    # West edge (left of pixel)
+                    if (x == 0 or not water_mask[y, x-1]) and y < height - 1 and water_mask[y+1, x]:
+                        # This pixel and its bottom neighbor both have water, and there's a boundary to the west
+                        tb = top_vertex_indices[(y, x)]
+                        tt = top_vertex_indices[(y+1, x)]
+                        bb = bottom_vertex_indices[(y, x)]
+                        bt = bottom_vertex_indices[(y+1, x)]
+                        
+                        # Create outward-facing quad (normal points west)
+                        faces.append([tb, tt, bb])
+                        faces.append([bb, tt, bt])
+                    
+                    # East edge (right of pixel)
+                    if (x == width - 1 or not water_mask[y, x+1]) and y < height - 1 and water_mask[y+1, x]:
+                        # This pixel and its bottom neighbor both have water, and there's a boundary to the east
+                        tb = top_vertex_indices[(y, x)]
+                        tt = top_vertex_indices[(y+1, x)]
+                        bb = bottom_vertex_indices[(y, x)]
+                        bt = bottom_vertex_indices[(y+1, x)]
+                        
+                        # Create outward-facing quad (normal points east)
+                        faces.append([tb, bb, tt])
+                        faces.append([bb, bt, tt])
         
         if not vertices:
             print("Warning: No water vertices found, creating empty water mesh")
@@ -214,7 +284,9 @@ class ModelGenerator:
             vertices = np.array(vertices, dtype=np.float32)
             faces = np.array(faces, dtype=np.int32)
         
-        print(f"Water mesh: {len(vertices)} vertices, {len(faces)} faces")
+        print(f"Thickened water mesh: {len(vertices)} vertices, {len(faces)} faces")
+        print(f"Water depth: {water_depth:.2f} meters")
+        print(f"Water volume: top at {top_z:.2f}, bottom at {bottom_z:.2f}")
         
         # Create mesh using meshlib
         water_mesh = mn.meshFromFacesVerts(faces, vertices)
@@ -323,7 +395,7 @@ class ModelGenerator:
         print("Step 3: Creating water surface mesh...")
         water_level = np.mean(elevation_data[water_mask]) if np.any(water_mask) else 0
         water_mesh = self._create_water_mesh(
-            water_mask, bounds, water_level, 
+            water_mask, bounds, water_level, water_depth, 
             base_height, elevation_multiplier
         )
         
