@@ -82,6 +82,280 @@ class ModelGenerator:
         
         return downsampled
     
+    def _detect_water_areas(self, elevation_data, water_threshold=None, min_water_area=100):
+        """
+        Detect water areas in elevation data based on elevation thresholds and area constraints.
+        
+        Args:
+            elevation_data (numpy.ndarray): 2D array of elevation values
+            water_threshold (float, optional): Elevation below which areas are considered water.
+                                             If None, uses percentile-based approach.
+            min_water_area (int): Minimum number of connected pixels to be considered a water body
+            
+        Returns:
+            numpy.ndarray: Boolean mask where True indicates water areas
+        """
+        from scipy import ndimage
+        from skimage.measure import label
+        
+        # Determine water threshold
+        if water_threshold is None:
+            # Use a percentile-based approach: areas in the lowest 10% of elevations
+            water_threshold = np.percentile(elevation_data, 10)
+        
+        print(f"Water detection threshold: {water_threshold:.2f} meters")
+        
+        # Initial water mask based on elevation
+        water_mask = elevation_data <= water_threshold
+        
+        # Filter small water bodies based on connected component analysis
+        labeled_water = label(water_mask, connectivity=2)
+        
+        # Count pixels in each component
+        component_sizes = np.bincount(labeled_water.ravel())
+        
+        # Keep only components larger than minimum area
+        large_components = np.where(component_sizes >= min_water_area)[0]
+        
+        # Create final water mask
+        final_water_mask = np.isin(labeled_water, large_components)
+        
+        water_pixel_count = np.sum(final_water_mask)
+        total_pixels = elevation_data.size
+        water_percentage = (water_pixel_count / total_pixels) * 100
+        
+        print(f"Detected {water_pixel_count} water pixels ({water_percentage:.1f}% of total area)")
+        print(f"Found {len(large_components)-1} significant water bodies")  # -1 for background
+        
+        return final_water_mask
+    
+    def _create_water_mesh(self, water_mask, bounds, water_level, base_height=1.0, elevation_multiplier=1.0):
+        """
+        Create a separate mesh for water areas.
+        
+        Args:
+            water_mask (numpy.ndarray): Boolean mask indicating water areas
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
+            water_level (float): Elevation level for water surface
+            base_height (float): Height of the base
+            elevation_multiplier (float): Elevation scaling multiplier
+            
+        Returns:
+            meshlib.mrmeshpy.Mesh: Water mesh
+        """
+        height, width = water_mask.shape
+        
+        # Calculate real-world dimensions
+        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
+        scale_x = width_meters / width
+        scale_y = height_meters / height
+        
+        # Convert water level to model units
+        water_z = water_level * elevation_multiplier + base_height
+        
+        vertices = []
+        faces = []
+        
+        # Create water surface vertices and faces for each water pixel
+        for y in range(height - 1):
+            for x in range(width - 1):
+                # Check if this quad has any water
+                quad_water = (water_mask[y, x] or water_mask[y, x+1] or 
+                             water_mask[y+1, x] or water_mask[y+1, x+1])
+                
+                if quad_water:
+                    # Calculate vertex positions
+                    v_indices = []
+                    
+                    # Create vertices for this quad
+                    quad_positions = [
+                        (x * scale_x, y * scale_y),           # bottom-left
+                        ((x+1) * scale_x, y * scale_y),       # bottom-right
+                        (x * scale_x, (y+1) * scale_y),       # top-left
+                        ((x+1) * scale_x, (y+1) * scale_y)    # top-right
+                    ]
+                    
+                    # Add vertices only if they correspond to water pixels
+                    for i, (px, py) in enumerate(quad_positions):
+                        grid_y = y if i < 2 else y + 1
+                        grid_x = x if i % 2 == 0 else x + 1
+                        
+                        if water_mask[grid_y, grid_x]:
+                            vertices.append([px, py, water_z])
+                            v_indices.append(len(vertices) - 1)
+                        else:
+                            v_indices.append(-1)  # Mark as invalid
+                    
+                    # Create triangles if we have enough valid vertices
+                    valid_vertices = [i for i in v_indices if i >= 0]
+                    if len(valid_vertices) >= 3:
+                        # Simple triangulation of the quad
+                        if len(valid_vertices) == 4:
+                            # Full quad - create two triangles
+                            if all(v >= 0 for v in v_indices):
+                                faces.append([v_indices[0], v_indices[1], v_indices[2]])
+                                faces.append([v_indices[1], v_indices[3], v_indices[2]])
+                        elif len(valid_vertices) == 3:
+                            # Triangle
+                            faces.append(valid_vertices)
+        
+        if not vertices:
+            print("Warning: No water vertices found, creating empty water mesh")
+            # Return empty mesh
+            vertices = np.array([[0, 0, 0]], dtype=np.float32)
+            faces = np.array([[0, 0, 0]], dtype=np.int32)
+        else:
+            vertices = np.array(vertices, dtype=np.float32)
+            faces = np.array(faces, dtype=np.int32)
+        
+        print(f"Water mesh: {len(vertices)} vertices, {len(faces)} faces")
+        
+        # Create mesh using meshlib
+        water_mesh = mn.meshFromFacesVerts(faces, vertices)
+        
+        return water_mesh
+    
+    def _lower_terrain_at_water(self, mesh, elevation_data, water_mask, bounds, 
+                               water_depth=2.0, base_height=1.0, elevation_multiplier=1.0):
+        """
+        Lower the terrain mesh at water locations using meshlib functions.
+        
+        Args:
+            mesh (meshlib.mrmeshpy.Mesh): The terrain mesh to modify
+            elevation_data (numpy.ndarray): Original elevation data
+            water_mask (numpy.ndarray): Boolean mask indicating water areas
+            bounds (tuple): Geographic bounds
+            water_depth (float): How much to lower water areas (in meters)
+            base_height (float): Base height of the mesh
+            elevation_multiplier (float): Elevation scaling multiplier
+            
+        Returns:
+            meshlib.mrmeshpy.Mesh: Modified mesh with lowered water areas
+        """
+        height, width = water_mask.shape
+        
+        # Calculate scaling factors
+        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
+        scale_x = width_meters / width
+        scale_y = height_meters / height
+        
+        # Get mesh points as numpy array
+        points = mn.getNumpyVerts(mesh)
+        
+        print(f"Modifying {len(points)} mesh vertices for water areas")
+        
+        # Modify vertices that fall within water areas
+        modified_count = 0
+        for i, point in enumerate(points):
+            # Convert mesh coordinates back to grid coordinates
+            grid_x = int(point[0] / scale_x)
+            grid_y = int(point[1] / scale_y)
+            
+            # Check bounds
+            if 0 <= grid_x < width and 0 <= grid_y < height:
+                if water_mask[grid_y, grid_x]:
+                    # Lower this vertex
+                    current_elevation = (point[2] - base_height) / elevation_multiplier
+                    new_elevation = current_elevation - water_depth
+                    points[i][2] = new_elevation * elevation_multiplier + base_height
+                    modified_count += 1
+        
+        print(f"Modified {modified_count} vertices for water depression")
+        
+        # Create new mesh with modified vertices
+        faces = mn.getNumpyFaces(mesh)
+        modified_mesh = mn.meshFromFacesVerts(faces, points)
+        
+        return modified_mesh
+    
+    def create_water_features(self, mesh, elevation_data, bounds, 
+                            water_threshold=None, water_depth=2.0, 
+                            base_height=1.0, elevation_multiplier=1.0,
+                            min_water_area=100, output_prefix="terrain"):
+        """
+        Extract water regions from the mesh and create separate water objects.
+        
+        This function identifies water areas from elevation data, lowers those areas 
+        in the terrain mesh, and creates a separate water mesh to fill the cavities.
+        
+        Args:
+            mesh (meshlib.mrmeshpy.Mesh): The terrain mesh to process
+            elevation_data (numpy.ndarray): 2D array of elevation values used to create the mesh
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
+            water_threshold (float, optional): Elevation below which areas are considered water.
+                                             If None, uses automatic detection (10th percentile)
+            water_depth (float): How much to lower water areas below original elevation (meters)
+            base_height (float): Height of the flat base
+            elevation_multiplier (float): Elevation scaling multiplier used in original mesh
+            min_water_area (int): Minimum number of connected pixels to be considered a water body
+            output_prefix (str): Prefix for output filenames
+            
+        Returns:
+            tuple: (modified_terrain_mesh, water_mesh, water_mask)
+                - modified_terrain_mesh: Terrain mesh with lowered water areas
+                - water_mesh: Separate mesh representing water surfaces
+                - water_mask: Boolean array indicating water locations
+        """
+        print("\n=== Water Feature Extraction ===")
+        
+        # Step 1: Detect water areas from elevation data
+        print("Step 1: Detecting water areas...")
+        water_mask = self._detect_water_areas(elevation_data, water_threshold, min_water_area)
+        
+        if not np.any(water_mask):
+            print("No significant water areas detected.")
+            return mesh, None, water_mask
+        
+        # Step 2: Lower terrain at water locations
+        print("Step 2: Lowering terrain at water locations...")
+        modified_terrain = self._lower_terrain_at_water(
+            mesh, elevation_data, water_mask, bounds, 
+            water_depth, base_height, elevation_multiplier
+        )
+        
+        # Step 3: Create water surface mesh
+        print("Step 3: Creating water surface mesh...")
+        water_level = np.mean(elevation_data[water_mask]) if np.any(water_mask) else 0
+        water_mesh = self._create_water_mesh(
+            water_mask, bounds, water_level, 
+            base_height, elevation_multiplier
+        )
+        
+        # Step 4: Save results
+        print("Step 4: Saving water feature results...")
+        
+        # Save modified terrain
+        terrain_file = f"{output_prefix}_with_water.obj"
+        try:
+            self.save_mesh(modified_terrain, terrain_file)
+        except Exception as e:
+            print(f"Failed to save terrain with water: {e}")
+        
+        # Save water mesh if it exists and has vertices
+        if water_mesh is not None and water_mesh.points.size() > 1:
+            water_file = f"{output_prefix}_water.obj"
+            try:
+                self.save_mesh(water_mesh, water_file)
+            except Exception as e:
+                print(f"Failed to save water mesh: {e}")
+        
+        # Save water mask as numpy array for further analysis
+        try:
+            mask_file = f"{output_prefix}_water_mask.npy"
+            np.save(mask_file, water_mask)
+            print(f"Water mask saved to: {mask_file}")
+        except Exception as e:
+            print(f"Failed to save water mask: {e}")
+        
+        print(f"\n✓ Water feature extraction complete!")
+        print(f"Generated files:")
+        print(f"  - Modified terrain: {terrain_file}")
+        if water_mesh is not None and water_mesh.points.size() > 1:
+            print(f"  - Water surface: {water_file}")
+        print(f"  - Water mask: {mask_file}")
+        
+        return modified_terrain, water_mesh, water_mask
+    
     def create_mesh_from_elevation(self, elevation_data, bounds, base_height=1.0, 
                                  elevation_multiplier=1.0):
         """
@@ -253,7 +527,9 @@ class ModelGenerator:
     
     def generate_terrain_model(self, bounds, topo_dir="topo", base_height=1.0, 
                              elevation_multiplier=1.0,
-                             downsample_factor=10, output_prefix="terrain_model"):
+                             downsample_factor=10, output_prefix="terrain_model",
+                             extract_water=False, water_threshold=None, 
+                             water_depth=2.0, min_water_area=100):
         """
         Generate a 3D terrain model from SRTM elevation data.
         
@@ -264,15 +540,24 @@ class ModelGenerator:
             elevation_multiplier (float): Multiplier for realistic elevation scaling (1.0 = realistic scale)
             downsample_factor (int): Factor to downsample elevation data (default: 10)
             output_prefix (str): Prefix for output filename
+            extract_water (bool): Whether to extract water features from the terrain
+            water_threshold (float, optional): Elevation below which areas are considered water
+            water_depth (float): How much to lower water areas below original elevation (meters)
+            min_water_area (int): Minimum number of connected pixels to be considered a water body
             
         Returns:
-            meshlib.mrmeshpy.Mesh: The generated 3D mesh
+            dict: Dictionary containing generated meshes and data:
+                - 'terrain_mesh': The main terrain mesh
+                - 'water_mesh': Water surface mesh (if extract_water=True)
+                - 'water_mask': Boolean array indicating water locations (if extract_water=True)
+                - 'elevation_data': The elevation data used
         """
         print("=== Terrain Model Generation ===")
         print(f"Bounds: {bounds}")
         print(f"Base height: {base_height}")
         print(f"Elevation multiplier: {elevation_multiplier}")
         print(f"Downsample factor: {downsample_factor}")
+        print(f"Water extraction: {extract_water}")
         
         # Get elevation data from SRTM
         print("Loading elevation data from SRTM...")
@@ -292,19 +577,45 @@ class ModelGenerator:
         print("Creating 3D mesh from elevation data...")
         mesh = self.create_mesh_from_elevation(elevation_data, bounds, base_height, elevation_multiplier)
         
-        # Save the mesh as OBJ file only
-        output_file = f"{output_prefix}.obj"
+        # Initialize result dictionary
+        result = {
+            'terrain_mesh': mesh,
+            'elevation_data': elevation_data,
+            'water_mesh': None,
+            'water_mask': None
+        }
         
-        print("Saving mesh file...")
-        try:
-            self.save_mesh(mesh, output_file)
-        except Exception as e:
-            print(f"Failed to save {output_file}: {e}")
+        # Extract water features if requested
+        if extract_water:
+            print("Extracting water features...")
+            modified_terrain, water_mesh, water_mask = self.create_water_features(
+                mesh, elevation_data, bounds,
+                water_threshold=water_threshold,
+                water_depth=water_depth,
+                base_height=base_height,
+                elevation_multiplier=elevation_multiplier,
+                min_water_area=min_water_area,
+                output_prefix=output_prefix
+            )
+            
+            # Update result with water features
+            result['terrain_mesh'] = modified_terrain
+            result['water_mesh'] = water_mesh
+            result['water_mask'] = water_mask
+        else:
+            # Save the standard mesh
+            output_file = f"{output_prefix}.obj"
+            print("Saving mesh file...")
+            try:
+                self.save_mesh(mesh, output_file)
+            except Exception as e:
+                print(f"Failed to save {output_file}: {e}")
         
         print(f"\n✓ Terrain model generation complete!")
-        print(f"Generated file: {output_file}")
+        if not extract_water:
+            print(f"Generated file: {output_prefix}.obj")
         
-        return mesh
+        return result
 
 
 def main():
@@ -314,18 +625,80 @@ def main():
     # Create model generator
     generator = ModelGenerator()
     
-    # Example: Generate real terrain model
-    print("Generating terrain model from SRTM data...")
-    # Example bounds for a small area (adjust as needed)
+    # Example 1: Generate standard terrain model
+    print("=== Example 1: Standard Terrain Generation ===")
     bounds = (-122.5, 37.7, -122.4, 37.8)  # San Francisco area
-    real_mesh = generator.generate_terrain_model(
+    standard_result = generator.generate_terrain_model(
         bounds=bounds,
         topo_dir="topo",
         base_height=10.0,           # 10 unit base height
         elevation_multiplier=1.0,   # Default elevation multiplier
         downsample_factor=10,       # Default downsampling
-        output_prefix="example_terrain"
+        output_prefix="sf_terrain_standard",
+        extract_water=False         # Standard generation without water
     )
+    
+    # Example 2: Generate terrain with water features
+    print("\n=== Example 2: Terrain with Water Feature Extraction ===")
+    # Use a coastal area that's likely to have water features
+    bounds_coastal = (-122.6, 37.6, -122.3, 37.9)  # Larger SF Bay area
+    water_result = generator.generate_terrain_model(
+        bounds=bounds_coastal,
+        topo_dir="topo",
+        base_height=5.0,
+        elevation_multiplier=2.0,   # Exaggerate elevation for better visualization
+        downsample_factor=8,        # Slightly higher resolution for water detection
+        output_prefix="sf_bay_area_water",
+        extract_water=True,         # Enable water extraction
+        water_threshold=5.0,        # Areas below 5 meters considered water
+        water_depth=3.0,            # Lower water areas by 3 meters
+        min_water_area=50           # Minimum water body size
+    )
+    
+    # Example 3: Automatic water detection (no threshold specified)
+    print("\n=== Example 3: Automatic Water Detection ===")
+    # Example for a lake area or river delta
+    bounds_lake = (-122.55, 37.75, -122.45, 37.85)  # Central SF area
+    auto_water_result = generator.generate_terrain_model(
+        bounds=bounds_lake,
+        topo_dir="topo",
+        base_height=2.0,
+        elevation_multiplier=1.5,
+        downsample_factor=12,
+        output_prefix="sf_auto_water",
+        extract_water=True,
+        water_threshold=None,       # Automatic detection using percentiles
+        water_depth=2.0,
+        min_water_area=25
+    )
+    
+    # Report results
+    print("\n=== Generation Summary ===")
+    print(f"Standard terrain mesh: {standard_result['terrain_mesh'].points.size()} vertices")
+    
+    if water_result['water_mesh'] is not None:
+        print(f"Bay area terrain mesh: {water_result['terrain_mesh'].points.size()} vertices")
+        print(f"Bay area water mesh: {water_result['water_mesh'].points.size()} vertices")
+        water_pixels = np.sum(water_result['water_mask'])
+        total_pixels = water_result['water_mask'].size
+        print(f"Water coverage: {water_pixels}/{total_pixels} pixels ({100*water_pixels/total_pixels:.1f}%)")
+    
+    if auto_water_result['water_mesh'] is not None:
+        print(f"Auto-detect terrain mesh: {auto_water_result['terrain_mesh'].points.size()} vertices")
+        print(f"Auto-detect water mesh: {auto_water_result['water_mesh'].points.size()} vertices")
+        water_pixels_auto = np.sum(auto_water_result['water_mask'])
+        total_pixels_auto = auto_water_result['water_mask'].size
+        print(f"Auto water coverage: {water_pixels_auto}/{total_pixels_auto} pixels ({100*water_pixels_auto/total_pixels_auto:.1f}%)")
+    
+    print("\nAll examples completed successfully!")
+    print("\nGenerated files:")
+    print("- sf_terrain_standard.obj (standard terrain)")
+    print("- sf_bay_area_water_with_water.obj (modified terrain)")  
+    print("- sf_bay_area_water_water.obj (water surface)")
+    print("- sf_bay_area_water_water_mask.npy (water mask)")
+    print("- sf_auto_water_with_water.obj (auto-detect terrain)")
+    print("- sf_auto_water_water.obj (auto-detect water)")
+    print("- sf_auto_water_water_mask.npy (auto-detect water mask)")
 
 
 if __name__ == "__main__":

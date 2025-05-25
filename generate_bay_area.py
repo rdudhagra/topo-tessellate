@@ -147,6 +147,7 @@ def generate_terrain():
             bounds=bounds,
             topo_dir="topo",
             base_height=0.1,
+            extract_water=True,
             elevation_multiplier=5,
             downsample_factor=5,
             output_prefix="bay_area_terrain",
