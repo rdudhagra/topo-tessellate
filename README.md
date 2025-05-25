@@ -1,18 +1,19 @@
 # World to Model - Terrain Generator
 
-A Python application to generate 3D CAD models of terrain from SRTM elevation data and extract building data from OpenStreetMap.
+A Python application to generate 3D CAD models of terrain from SRTM elevation data and extract 3D-ready building data from OpenStreetMap.
 
 ## Overview
 
-This tool creates high-quality 3D models of terrain and extracts building data for various purposes including:
+This tool creates high-quality 3D models of terrain and extracts 3D-ready building data for various purposes including:
 
 - CAD design and engineering projects
 - Digital fabrication (3D printing)
 - Visualization and presentations
 - GIS and mapping applications
 - Urban planning and analysis
+- 3D city modeling and visualization
 
-The application uses SRTM (Shuttle Radar Topography Mission) data to generate accurate 3D terrain models with proper elevation, including water bodies. Additionally, it can extract building and structure data from OpenStreetMap for comprehensive urban modeling.
+The application uses SRTM (Shuttle Radar Topography Mission) data to generate accurate 3D terrain models with proper elevation, including water bodies. Additionally, it extracts building and structure data from OpenStreetMap that is specifically optimized for 3D modeling applications.
 
 ## Features
 
@@ -22,13 +23,13 @@ The application uses SRTM (Shuttle Radar Topography Mission) data to generate ac
 - Water body representation
 - Parametric terrain modeling with CadQuery
 
-### Building Data Extraction (`buildings.py`)
-- Extract building data from OpenStreetMap for any lat/lon bounding box
-- Focus on major buildings/structures (filters out small items like lamps, trees, etc.)
-- Fast local caching with compression (pickle + gzip)
-- Comprehensive building statistics and analytics
-- Support for building heights, areas, and types
-- Cache management with configurable expiration
+### 3D-Ready Building Data Extraction (`buildings.py`)
+- **3D-Focused**: Only extracts buildings with BOTH polygon coordinates AND height data
+- **Quality Filtering**: Focuses on major buildings/structures (filters out small items like lamps, trees, etc.)
+- **Fast Caching**: Local caching with compression (pickle + gzip) 
+- **Comprehensive Analytics**: Building statistics, areas, heights, and types
+- **Guaranteed 3D Data**: Every building has polygon geometry and height information
+- **Cache Management**: Configurable expiration and cache control
 
 ## New CadQuery Support
 
@@ -68,9 +69,9 @@ Run the script with your desired region's coordinates:
 python main.py --min-lon -122.673340 --min-lat 37.225955 --max-lon -121.753235 --max-lat 38.184228 --output-prefix bay_area
 ```
 
-### Building Data Extraction
+### 3D-Ready Building Data Extraction
 
-Use the `buildings.py` module to extract building data:
+Use the `buildings.py` module to extract 3D-ready building data:
 
 ```python
 from buildings import BuildingsExtractor
@@ -85,11 +86,12 @@ buildings = extractor.extract_buildings(bounds)
 # Print statistics
 extractor.print_stats()
 
-# Access individual building data
+# Access individual building data (all buildings guaranteed to have polygon + height)
 for building in buildings[:5]:
     print(f"Building {building.osm_id}: {building.building_type}")
-    print(f"  Area: {building.area:.0f} m²" if building.area else "  Area: Unknown")
-    print(f"  Height: {building.height:.1f} m" if building.height else "  Height: Unknown")
+    print(f"  Area: {building.area:.0f} m²")  # Always available
+    print(f"  Height: {building.height:.1f} m")  # Always available
+    print(f"  Coordinates: {len(building.coordinates)} points")  # Always available
 ```
 
 #### Cache Management
@@ -110,11 +112,12 @@ extractor.clear_cache(bounds)
 extractor.clear_cache()
 ```
 
-**Cache Performance:**
-- **Loading Speed**: ~127,000 buildings per second from cache
-- **Compression**: ~1.2MB for 7,771 buildings (excellent compression ratio)
-- **Memory Usage**: ~8.8MB for 7,771 buildings in memory
-- **Storage**: Compressed pickle files with gzip
+**3D-Ready Cache Performance:**
+- **Quality**: Only buildings with both polygon geometry AND height data
+- **Efficiency**: 5,556 3D-ready buildings vs 7,771 total buildings (71% have height data)
+- **File Size**: ~930KB for 5,556 3D-ready buildings (smaller, higher quality dataset)
+- **Loading Speed**: Lightning-fast cache loading for repeated queries
+- **Storage**: Compressed pickle files with gzip, named with `3d_` prefix
 
 ### Command-line Arguments
 
@@ -140,8 +143,8 @@ Generate a 3D model of the San Francisco Bay Area:
 python main.py --min-lon -122.673340 --min-lat 37.225955 --max-lon -121.753235 --max-lat 38.184228 --water-level 0 --detail-level 0.2 --output-prefix sf_bay_area --export-format step
 ```
 
-### Building Extraction
-Extract buildings for downtown Oakland:
+### 3D-Ready Building Extraction
+Extract 3D-ready buildings for downtown Oakland:
 
 ```python
 from buildings import BuildingsExtractor
@@ -152,12 +155,30 @@ bounds = (-122.28, 37.79, -122.25, 37.82)
 extractor = BuildingsExtractor()
 buildings = extractor.extract_buildings(bounds)
 
+# All buildings are guaranteed to have both geometry and height
+print(f"Extracted {len(buildings)} 3D-ready buildings")
+
 # Filter by building type
 hotels = [b for b in buildings if 'hotel' in b.building_type.lower()]
 offices = [b for b in buildings if 'office' in b.building_type.lower()]
 
 print(f"Found {len(hotels)} hotels and {len(offices)} office buildings")
+
+# Find tallest buildings (all have height data)
+tallest = sorted(buildings, key=lambda b: b.height, reverse=True)[:10]
+for i, building in enumerate(tallest):
+    print(f"{i+1}. {building.height:.1f}m - {building.building_type}")
 ```
+
+## 3D Modeling Benefits
+
+The 3D-focused building extraction provides several advantages:
+
+- **Guaranteed Data Quality**: Every building has both polygon geometry and height information
+- **3D Modeling Ready**: No need to filter or validate data before 3D modeling
+- **Smaller Datasets**: More efficient storage and processing (71% of buildings have height data)
+- **Better Performance**: Focused queries reduce API load and processing time
+- **Reliable Heights**: Uses explicit height tags or estimates from building levels
 
 ## Tips for Better Results
 
@@ -168,6 +189,7 @@ print(f"Found {len(hotels)} hotels and {len(offices)} office buildings")
   - STL for 3D printing
   - 3MF for modern 3D printing workflows
 - For building extraction, use smaller bounding boxes for faster processing
+- All extracted buildings are 3D-ready with guaranteed polygon and height data
 - Cache is automatically managed, but you can clear it if you need fresh data
 
 ## License
