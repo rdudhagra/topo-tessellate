@@ -114,8 +114,14 @@ class ModelGenerator:
         # Count pixels in each component
         component_sizes = np.bincount(labeled_water.ravel())
         
+        # Throw out `0` since this is the land
+        component_sizes = component_sizes[1:]
+
         # Keep only components larger than minimum area
         large_components = np.where(component_sizes >= min_water_area)[0]
+
+        # Increment the large components by 1 to account for the land being removed
+        large_components += 1
         
         # Create final water mask
         final_water_mask = np.isin(labeled_water, large_components)
