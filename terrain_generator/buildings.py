@@ -3,8 +3,8 @@
 Buildings Data Extractor for 3D Modeling
 
 This module extracts building and structure data from OpenStreetMap for a given
-latitude/longitude bounding box, focusing only on buildings with both polygon
-coordinates and height information for 3D modeling purposes.
+latitude/longitude bounding box, focusing on buildings with polygon coordinates.
+Uses a default height of 5 meters for buildings without explicit height data.
 """
 
 import requests
@@ -22,20 +22,21 @@ from collections import defaultdict
 
 @dataclass
 class Building:
-    """Represents a building extracted from OpenStreetMap with guaranteed polygon and height data."""
+    """Represents a building extracted from OpenStreetMap with polygon and height data."""
     osm_id: str
     building_type: str
     coordinates: List[Tuple[float, float]]  # Always has polygon data
     tags: Dict[str, str]
     area: float  # Always calculated from polygon
-    height: float  # Always has height data
+    height: float  # Always has height data (explicit or default 5m)
 
 
 class BuildingsExtractor:
-    """Extracts building data from OpenStreetMap using the Overpass API, focusing on 3D-ready buildings."""
+    """Extracts building data from OpenStreetMap using the Overpass API, with default height support."""
     
     OVERPASS_URL = "https://overpass-api.de/api/interpreter"
     CACHE_DIR = "building_cache"
+    DEFAULT_HEIGHT = 5.0  # Default height in meters for buildings without height data
     
     # Building types we want to include (major structures)
     MAJOR_BUILDING_TYPES = {
@@ -93,7 +94,7 @@ class BuildingsExtractor:
         # Create a hash of the bounds for the filename
         bounds_str = f"{bounds[0]:.6f},{bounds[1]:.6f},{bounds[2]:.6f},{bounds[3]:.6f}"
         bounds_hash = hashlib.md5(bounds_str.encode()).hexdigest()[:16]
-        return os.path.join(self.CACHE_DIR, f"buildings_3d_{bounds_hash}.pkl.gz")
+        return os.path.join(self.CACHE_DIR, f"buildings_cache_{bounds_hash}.pkl.gz")
     
     def _is_cache_valid(self, cache_file: str) -> bool:
         """Check if the cache file is still valid.
@@ -132,14 +133,15 @@ class BuildingsExtractor:
             'buildings': buildings,
             'stats': stats,
             'timestamp': time.time(),
-            'version': '2.0',  # Updated version for 3D-focused data
-            'filter_type': '3d_ready'  # Indicates this cache contains only 3D-ready buildings
+            'version': '3.0',  # Updated version for default height support
+            'filter_type': 'default_height',  # Indicates this cache uses default heights
+            'default_height': self.DEFAULT_HEIGHT
         }
         
         try:
             with gzip.open(cache_file, 'wb') as f:
                 pickle.dump(cache_data, f, protocol=pickle.HIGHEST_PROTOCOL)
-            print(f"Cached {len(buildings)} 3D-ready buildings to {cache_file}")
+            print(f"Cached {len(buildings)} buildings (with default heights) to {cache_file}")
         except Exception as e:
             print(f"Warning: Could not save cache: {e}")
     
@@ -166,7 +168,7 @@ class BuildingsExtractor:
             
             # Verify the bounds match and it's the right filter type
             if (cache_data.get('bounds') != bounds or 
-                cache_data.get('filter_type') != '3d_ready'):
+                cache_data.get('filter_type') != 'default_height'):
                 print(f"Warning: Cache mismatch, ignoring cache")
                 return None
             
@@ -174,7 +176,7 @@ class BuildingsExtractor:
             stats = cache_data['stats']
             cache_age_hours = (time.time() - cache_data['timestamp']) / 3600
             
-            print(f"Loaded {len(buildings)} 3D-ready buildings from cache (age: {cache_age_hours:.1f} hours)")
+            print(f"Loaded {len(buildings)} buildings from cache (age: {cache_age_hours:.1f} hours)")
             return buildings, stats
             
         except Exception as e:
@@ -197,42 +199,30 @@ class BuildingsExtractor:
             # Clear all cache files
             cache_dir = Path(self.CACHE_DIR)
             if cache_dir.exists():
-                cache_files = list(cache_dir.glob("buildings_3d_*.pkl.gz"))
+                cache_files = list(cache_dir.glob("buildings_cache_*.pkl.gz"))
                 for cache_file in cache_files:
                     cache_file.unlink()
                 print(f"Cleared {len(cache_files)} cache files")
     
     def build_overpass_query(self, bounds: Tuple[float, float, float, float]) -> str:
-        """Build Overpass API query for buildings with height data in the given bounds.
+        """Build Overpass API query for buildings in the given bounds.
         
         Args:
             bounds: (min_lon, min_lat, max_lon, max_lat) bounding box
             
         Returns:
-            Overpass QL query string focused on buildings with height information
+            Overpass QL query string for all buildings (height not required)
         """
         min_lon, min_lat, max_lon, max_lat = bounds
         
-        # Query specifically for buildings with height data
+        # Query for all buildings (no height requirement)
         query = f"""[out:json][timeout:{self.timeout}];
 (
-  // Buildings with explicit height tag
-  way["building"]["height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["building"]["building:height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["building"]["building:levels"]({min_lat},{min_lon},{max_lat},{max_lon});
-  // Major structures with height data
-  way["amenity"~"^(hospital|school|university|library|fire_station|police|courthouse|embassy|cinema|theatre|museum|town_hall|community_centre)$"]["height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["amenity"~"^(hospital|school|university|library|fire_station|police|courthouse|embassy|cinema|theatre|museum|town_hall|community_centre)$"]["building:height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["amenity"~"^(hospital|school|university|library|fire_station|police|courthouse|embassy|cinema|theatre|museum|town_hall|community_centre)$"]["building:levels"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["leisure"~"^(sports_centre|stadium|swimming_pool|fitness_centre)$"]["height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["leisure"~"^(sports_centre|stadium|swimming_pool|fitness_centre)$"]["building:height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["leisure"~"^(sports_centre|stadium|swimming_pool|fitness_centre)$"]["building:levels"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["shop"~"^(supermarket|mall|department_store)$"]["height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["shop"~"^(supermarket|mall|department_store)$"]["building:height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["shop"~"^(supermarket|mall|department_store)$"]["building:levels"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["tourism"~"^(hotel|hostel|motel|guest_house|attraction|museum)$"]["height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["tourism"~"^(hotel|hostel|motel|guest_house|attraction|museum)$"]["building:height"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["tourism"~"^(hotel|hostel|motel|guest_house|attraction|museum)$"]["building:levels"]({min_lat},{min_lon},{max_lat},{max_lon});
+  way["building"]({min_lat},{min_lon},{max_lat},{max_lon});
+  way["amenity"~"^(hospital|school|university|library|fire_station|police|courthouse|embassy|cinema|theatre|museum|town_hall|community_centre)$"]({min_lat},{min_lon},{max_lat},{max_lon});
+  way["leisure"~"^(sports_centre|stadium|swimming_pool|fitness_centre)$"]({min_lat},{min_lon},{max_lat},{max_lon});
+  way["shop"~"^(supermarket|mall|department_store)$"]({min_lat},{min_lon},{max_lat},{max_lon});
+  way["tourism"~"^(hotel|hostel|motel|guest_house|attraction|museum)$"]({min_lat},{min_lon},{max_lat},{max_lon});
 );
 out geom;"""
         return query
@@ -283,14 +273,14 @@ out geom;"""
         
         return area_m2
     
-    def extract_height(self, tags: Dict[str, str]) -> Optional[float]:
-        """Extract building height from tags.
+    def extract_height(self, tags: Dict[str, str]) -> float:
+        """Extract building height from tags, or return default height.
         
         Args:
             tags: OpenStreetMap tags dictionary
             
         Returns:
-            Height in meters if available, None otherwise
+            Height in meters (explicit from tags or default 5.0m)
         """
         # Try different height tags
         for height_tag in ['height', 'building:height']:
@@ -299,11 +289,17 @@ out geom;"""
                 try:
                     # Handle different units
                     if height_str.endswith('m'):
-                        return float(height_str[:-1])
+                        height = float(height_str[:-1])
+                        if height > 0:
+                            return height
                     elif height_str.endswith('ft'):
-                        return float(height_str[:-2]) * 0.3048  # Convert feet to meters
+                        height = float(height_str[:-2]) * 0.3048  # Convert feet to meters
+                        if height > 0:
+                            return height
                     else:
-                        return float(height_str)
+                        height = float(height_str)
+                        if height > 0:
+                            return height
                 except ValueError:
                     continue
         
@@ -311,25 +307,27 @@ out geom;"""
         if 'building:levels' in tags:
             try:
                 levels = int(tags['building:levels'])
-                return levels * 3.0  # Assume 3 meters per level
+                if levels > 0:
+                    return levels * 3.0  # Assume 3 meters per level
             except ValueError:
                 pass
         
-        return None
+        # Return default height if no explicit height found
+        return self.DEFAULT_HEIGHT
     
     def extract_buildings(self, bounds: Tuple[float, float, float, float], 
                          force_refresh: bool = False) -> List[Building]:
         """Extract building data from OpenStreetMap for the given bounds.
-        Only returns buildings with both polygon coordinates AND height data.
+        Returns buildings with polygon coordinates and height (explicit or default 5m).
         
         Args:
             bounds: (min_lon, min_lat, max_lon, max_lat) bounding box
             force_refresh: If True, ignore cache and fetch fresh data
             
         Returns:
-            List of Building objects (guaranteed to have both polygon and height data)
+            List of Building objects with polygon and height data
         """
-        print(f"Extracting 3D-ready buildings for bounds: {bounds}")
+        print(f"Extracting buildings for bounds: {bounds}")
         
         # Try to load from cache first
         if not force_refresh:
@@ -365,8 +363,9 @@ out geom;"""
         buildings = []
         processed = 0
         excluded_no_geometry = 0
-        excluded_no_height = 0
         excluded_tags = 0
+        default_height_count = 0
+        explicit_height_count = 0
         
         for element in data.get('elements', []):
             processed += 1
@@ -391,11 +390,20 @@ out geom;"""
                 excluded_no_geometry += 1
                 continue
             
-            # Extract height - REQUIRED for 3D modeling
+            # Extract height (always returns a value, either explicit or default)
             height = self.extract_height(tags)
-            if height is None or height <= 0:
-                excluded_no_height += 1
-                continue
+            
+            # Track if height was explicit or default
+            has_explicit_height = (
+                'height' in tags or 
+                'building:height' in tags or 
+                'building:levels' in tags
+            )
+            
+            if has_explicit_height:
+                explicit_height_count += 1
+            else:
+                default_height_count += 1
             
             # Determine building type
             building_type = tags.get('building', 'unknown')
@@ -430,14 +438,16 @@ out geom;"""
         
         self.stats['processed_elements'] = processed
         self.stats['excluded_no_geometry'] = excluded_no_geometry
-        self.stats['excluded_no_height'] = excluded_no_height
         self.stats['excluded_tags'] = excluded_tags
-        self.stats['total_excluded'] = excluded_no_geometry + excluded_no_height + excluded_tags
+        self.stats['explicit_height_count'] = explicit_height_count
+        self.stats['default_height_count'] = default_height_count
+        self.stats['total_excluded'] = excluded_no_geometry + excluded_tags
         
         self.buildings = buildings
         
-        print(f"Extracted {len(buildings)} 3D-ready buildings from {processed} elements")
-        print(f"Excluded: {excluded_no_height} (no height), {excluded_no_geometry} (no geometry), {excluded_tags} (unwanted tags)")
+        print(f"Extracted {len(buildings)} buildings from {processed} elements")
+        print(f"Height data: {explicit_height_count} explicit, {default_height_count} default ({self.DEFAULT_HEIGHT}m)")
+        print(f"Excluded: {excluded_no_geometry} (no geometry), {excluded_tags} (unwanted tags)")
         
         # Save to cache
         self._save_to_cache(bounds, buildings, dict(self.stats))
@@ -478,10 +488,12 @@ out geom;"""
         
         stats['building_type_distribution'] = building_types
         
-        # 3D modeling readiness
+        # Building readiness
         stats['buildings_with_area'] = len(self.buildings)  # All have area
-        stats['buildings_with_height'] = len(self.buildings)  # All have height
-        stats['3d_modeling_ready'] = len(self.buildings)  # All are 3D ready
+        stats['buildings_with_height'] = len(self.buildings)  # All have height (explicit or default)
+        stats['buildings_with_explicit_height'] = stats.get('explicit_height_count', 0)
+        stats['buildings_with_default_height'] = stats.get('default_height_count', 0)
+        stats['default_height_meters'] = self.DEFAULT_HEIGHT
         
         return stats
     
@@ -493,14 +505,17 @@ out geom;"""
             print(stats['error'])
             return
         
-        print("\n=== 3D-Ready Building Extraction Statistics ===")
-        print(f"Total 3D-ready buildings extracted: {stats['total_buildings']}")
+        print("\n=== Building Extraction Statistics ===")
+        print(f"Total buildings extracted: {stats['total_buildings']}")
         print(f"Elements processed: {stats['processed_elements']}")
         print(f"Elements excluded: {stats['total_excluded']}")
-        print(f"  - No height data: {stats.get('excluded_no_height', 0)}")
         print(f"  - No geometry: {stats.get('excluded_no_geometry', 0)}")
         print(f"  - Unwanted tags: {stats.get('excluded_tags', 0)}")
-        print(f"3D modeling ready: {stats['3d_modeling_ready']} (100%)")
+        
+        print(f"\n=== Height Data ===")
+        print(f"Buildings with explicit height: {stats.get('buildings_with_explicit_height', 0)}")
+        print(f"Buildings with default height: {stats.get('buildings_with_default_height', 0)} ({stats['default_height_meters']}m)")
+        print(f"Total buildings with height: {stats['buildings_with_height']} (100%)")
         
         print(f"\n=== Area Statistics ===")
         print(f"Total building area: {stats['total_building_area_m2']:,.0f} m²")
@@ -520,8 +535,8 @@ out geom;"""
 
 
 if __name__ == "__main__":
-    # Example usage with 3D-focused extraction
-    print("=== 3D-Ready Buildings Extractor Example ===")
+    # Example usage with default height support
+    print("=== Buildings Extractor with Default Height Support ===")
     
     # Downtown SF bounds (smaller area for testing)
     bounds = (-122.42, 37.77, -122.38, 37.80)
@@ -539,18 +554,24 @@ if __name__ == "__main__":
         print(f"  Area: {building.area:.0f} m²")
         print(f"  Height: {building.height:.1f} m")
         print(f"  Coordinates: {len(building.coordinates)} points")
-        print(f"  3D Ready: ✓ (guaranteed polygon + height)")
+        
+        # Check if height was explicit or default
+        has_explicit = ('height' in building.tags or 
+                       'building:height' in building.tags or 
+                       'building:levels' in building.tags)
+        height_source = "explicit" if has_explicit else f"default ({extractor.DEFAULT_HEIGHT}m)"
+        print(f"  Height source: {height_source}")
     
     # Demonstrate cache usage
     print(f"\n=== Demonstrating Cache ===")
     print("Running the same query again (should load from cache)...")
     extractor2 = BuildingsExtractor()
     buildings2 = extractor2.extract_buildings(bounds)
-    print(f"Loaded {len(buildings2)} 3D-ready buildings")
+    print(f"Loaded {len(buildings2)} buildings")
     
     # Show cache management
     print(f"\nCache management:")
     print(f"- Cache directory: {extractor.CACHE_DIR}")
-    print(f"- Cache files are named with '3d_' prefix for 3D-ready buildings")
+    print(f"- Default height: {extractor.DEFAULT_HEIGHT} meters")
     print(f"- To clear cache: extractor.clear_cache()")
     print(f"- To force refresh: extractor.extract_buildings(bounds, force_refresh=True)") 
