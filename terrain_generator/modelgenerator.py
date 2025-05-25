@@ -77,8 +77,7 @@ class ModelGenerator:
         # Use slicing to downsample - take every nth point
         downsampled = elevation_data[::downsample_factor, ::downsample_factor]
         
-        print(f"Downsampled from {elevation_data.shape} to {downsampled.shape} "
-              f"(factor: {downsample_factor})")
+        print(f"Downsampled elevation data from {elevation_data.shape} to {downsampled.shape}")
         
         return downsampled
     
@@ -102,8 +101,6 @@ class ModelGenerator:
         if water_threshold is None:
             # Use a percentile-based approach: areas in the lowest 10% of elevations
             water_threshold = np.percentile(elevation_data, 10)
-        
-        print(f"Water detection threshold: {water_threshold:.2f} meters")
         
         # Initial water mask based on elevation
         water_mask = elevation_data <= water_threshold
@@ -130,8 +127,7 @@ class ModelGenerator:
         total_pixels = elevation_data.size
         water_percentage = (water_pixel_count / total_pixels) * 100
         
-        print(f"Detected {water_pixel_count} water pixels ({water_percentage:.1f}% of total area)")
-        print(f"Found {len(large_components)-1} significant water bodies")  # -1 for background
+        print(f"Detected {water_pixel_count} water pixels ({water_percentage:.1f}% of area)")
         
         return final_water_mask
     
@@ -296,17 +292,12 @@ class ModelGenerator:
                                 faces.append([bottom_left, bottom_right, top_right])
         
         if not vertices:
-            print("Warning: No water vertices found, creating empty water mesh")
             # Return empty mesh
             vertices = np.array([[0, 0, 0]], dtype=np.float32)
             faces = np.array([[0, 0, 0]], dtype=np.int32)
         else:
             vertices = np.array(vertices, dtype=np.float32)
             faces = np.array(faces, dtype=np.int32)
-        
-        print(f"Thickened water mesh: {len(vertices)} vertices, {len(faces)} faces")
-        print(f"Water depth: {water_depth:.2f} meters")
-        print(f"Water volume: top at {top_z:.2f}, bottom at {bottom_z:.2f}")
         
         # Create mesh using meshlib
         water_mesh = mn.meshFromFacesVerts(faces, vertices)
@@ -340,8 +331,6 @@ class ModelGenerator:
         # Get mesh points as numpy array
         points = mn.getNumpyVerts(mesh)
         
-        print(f"Modifying {len(points)} mesh vertices for water areas")
-        
         # Modify vertices that fall within water areas
         modified_count = 0
         for i, point in enumerate(points):
@@ -358,19 +347,74 @@ class ModelGenerator:
                     points[i][2] = new_elevation * elevation_multiplier + base_height
                     modified_count += 1
         
-        print(f"Modified {modified_count} vertices for water depression")
-        
         # Create new mesh with modified vertices
         faces = mn.getNumpyFaces(mesh.topology)
         modified_mesh = mn.meshFromFacesVerts(faces, points)
         
         return modified_mesh
+
+    def _remove_small_components(self, mesh, min_component_size=100):
+        """
+        Remove disconnected components that are smaller than the specified threshold.
+        This helps eliminate free-floating faces and small isolated pieces.
+        
+        Args:
+            mesh (meshlib.mrmeshpy.Mesh): The mesh to clean
+            min_component_size (int): Minimum number of faces for a component to be kept
+            
+        Returns:
+            meshlib.mrmeshpy.Mesh: Cleaned mesh with small components removed
+        """
+        try:
+            # Get all connected components
+            components = mr.getAllComponents(mesh)
+            
+            if len(components) <= 1:
+                return mesh  # Single component, nothing to remove
+            
+            # Find the largest component (main terrain)
+            component_sizes = [comp.count() for comp in components]
+            largest_idx = np.argmax(component_sizes)
+            
+            # Keep components that are either the largest or above the minimum size
+            faces_to_keep = mr.FaceBitSet()
+            components_kept = 0
+            
+            for i, component in enumerate(components):
+                component_size = component.count()
+                if i == largest_idx or component_size >= min_component_size:
+                    faces_to_keep |= component
+                    components_kept += 1
+            
+            # If we're removing components, create a new mesh with only the kept faces
+            if components_kept < len(components):
+                print(f"Removing {len(components) - components_kept} small disconnected components")
+                
+                # Extract submesh with only the faces we want to keep
+                cleaned_mesh = mesh.clone()
+                faces_to_delete = mr.FaceBitSet()
+                faces_to_delete.resize(mesh.topology.lastValidFace() + 1, True)
+                faces_to_delete ^= faces_to_keep  # XOR to get faces NOT in faces_to_keep
+                
+                mr.deleteFaces(cleaned_mesh, faces_to_delete)
+                
+                # Pack the mesh to remove unused vertices
+                mr.packMesh(cleaned_mesh)
+                
+                return cleaned_mesh
+            else:
+                return mesh
+                
+        except Exception as e:
+            print(f"Warning: Failed to remove small components: {e}")
+            return mesh
     
     def create_water_features(self, mesh, elevation_data, bounds, 
                             water_threshold=None, water_depth=2.0, 
                             base_height=1.0, elevation_multiplier=1.0,
                             min_water_area=100, output_prefix="terrain",
-                            connect_water_regions=False, max_connection_gap=2):
+                            connect_water_regions=False, max_connection_gap=2,
+                            remove_small_components=True, min_component_size=100):
         """
         Extract water regions from the mesh and create separate water objects.
         
@@ -390,6 +434,8 @@ class ModelGenerator:
             output_prefix (str): Prefix for output filenames
             connect_water_regions (bool): Whether to connect nearby water regions
             max_connection_gap (int): Maximum gap to bridge between water regions
+            remove_small_components (bool): Whether to remove small disconnected components
+            min_component_size (int): Minimum number of faces for a component to be kept
             
         Returns:
             tuple: (modified_terrain_mesh, water_mesh, water_mask)
@@ -397,10 +443,9 @@ class ModelGenerator:
                 - water_mesh: Separate mesh representing water surfaces
                 - water_mask: Boolean array indicating water locations
         """
-        print("\n=== Water Feature Extraction ===")
+        print("Extracting water features...")
         
         # Step 1: Detect water areas from elevation data
-        print("Step 1: Detecting water areas...")
         water_mask = self._detect_water_areas(elevation_data, water_threshold, min_water_area)
         
         if not np.any(water_mask):
@@ -409,41 +454,31 @@ class ModelGenerator:
         
         # Step 1a: Optionally connect nearby water regions
         if connect_water_regions:
-            print("Step 1a: Connecting nearby water regions...")
             water_mask = self._connect_water_regions(water_mask, max_connection_gap)
         
         # Step 2: Lower terrain at water locations
-        print("Step 2: Lowering terrain at water locations...")
         modified_terrain = self._lower_terrain_at_water(
             mesh, elevation_data, water_mask, bounds, 
             water_depth, base_height, elevation_multiplier
         )
         
-        # Step 3: Create water surface mesh
-        print("Step 3: Creating water surface mesh...")
+        # Step 3: Remove small disconnected components from terrain
+        if remove_small_components:
+            modified_terrain = self._remove_small_components(modified_terrain, min_component_size)
+        
+        # Step 4: Create water surface mesh
         water_level = np.mean(elevation_data[water_mask]) if np.any(water_mask) else 0
         water_mesh = self._create_water_mesh(
             water_mask, bounds, water_level, water_depth, 
             base_height, elevation_multiplier
         )
-        
-        # Step 4: Save results
-        print("Step 4: Saving water feature results...")
-        
-        # Analyze mesh connectivity to check for issues
-        print("Step 4a: Analyzing terrain mesh connectivity...")
-        terrain_analysis = self.analyze_mesh_connectivity(modified_terrain, f"{output_prefix}_terrain")
-        
-        if water_mesh is not None:
-            print("Step 4b: Analyzing water mesh connectivity...")
-            water_analysis = self.analyze_mesh_connectivity(water_mesh, f"{output_prefix}_water")
-        
-        # Save modified terrain
+
+        # Step 5: Save results
         terrain_file = f"{output_prefix}_with_water.obj"
         try:
             self.save_mesh(modified_terrain, terrain_file)
         except Exception as e:
-            print(f"Failed to save terrain with water: {e}")
+            print(f"Failed to save terrain: {e}")
         
         # Save water mesh if it exists and has vertices
         if water_mesh is not None and water_mesh.points.size() > 1:
@@ -453,11 +488,7 @@ class ModelGenerator:
             except Exception as e:
                 print(f"Failed to save water mesh: {e}")
         
-        print(f"\n✓ Water feature extraction complete!")
-        print(f"Generated files:")
-        print(f"  - Modified terrain: {terrain_file}")
-        if water_mesh is not None and water_mesh.points.size() > 1:
-            print(f"  - Water surface: {water_file}")
+        print("Water feature extraction complete")
         
         return modified_terrain, water_mesh, water_mask
     
@@ -489,13 +520,10 @@ class ModelGenerator:
         # The elevation_multiplier allows scaling from this realistic baseline
         elevation_range = elevation_data.max() - elevation_data.min()
         elevation_scale = elevation_multiplier  # Direct multiplier of realistic scale
-            
-        print(f"Grid dimensions: {width}x{height}")
-        print(f"Real-world dimensions: {width_meters/1000:.2f} km x {height_meters/1000:.2f} km")
-        print(f"Grid scale: {scale_x:.2f} m/unit (x), {scale_y:.2f} m/unit (y)")
+        
+        print(f"Creating mesh from {width}x{height} elevation grid")
+        print(f"Real-world size: {width_meters/1000:.2f} x {height_meters/1000:.2f} km")
         print(f"Elevation range: {elevation_data.min():.1f} to {elevation_data.max():.1f} meters")
-        print(f"Elevation scaling: {elevation_scale:.6f} (multiplier: {elevation_multiplier})")
-        print(f"Max elevation in model: {elevation_range * elevation_scale:.1f} units")
         
         # Create vertices in a structured way
         vertices = []
@@ -516,8 +544,6 @@ class ModelGenerator:
                 point_y = y * scale_y
                 point_z = 0.0  # Flat base at z=0
                 vertices.append([point_x, point_y, point_z])
-        
-        print(f"Created {len(vertices)} vertices")
         
         # Create faces manually for structured grid
         faces = []
@@ -600,19 +626,14 @@ class ModelGenerator:
             faces.append([top_left, bottom_left, top_right])
             faces.append([top_right, bottom_left, bottom_right])
         
-        print(f"Created {len(faces)} faces")
+        print(f"Generated mesh with {len(vertices)} vertices and {len(faces)} faces")
         
         # Convert to numpy arrays
         vertices_array = np.array(vertices, dtype=np.float32)
         faces_array = np.array(faces, dtype=np.int32)
         
-        print(f"Vertices array shape: {vertices_array.shape}")
-        print(f"Faces array shape: {faces_array.shape}")
-        
         # Create the mesh using meshlib mrmeshnumpy
         mesh = mn.meshFromFacesVerts(faces_array, vertices_array)
-        
-        print(f"Final mesh has {mesh.points.size()} vertices and {mesh.topology.numValidFaces()} faces")
         
         return mesh
     
@@ -626,16 +647,17 @@ class ModelGenerator:
         """
         try:
             mr.saveMesh(mesh, filename)
-            print(f"Mesh saved to: {filename}")
+            print(f"Saved: {filename}")
         except Exception as e:
-            print(f"Failed to save mesh to: {filename} - Error: {e}")
+            print(f"Failed to save {filename}: {e}")
     
     def generate_terrain_model(self, bounds, topo_dir="topo", base_height=1.0, 
                              elevation_multiplier=1.0,
                              downsample_factor=10, output_prefix="terrain_model",
                              extract_water=False, water_threshold=None, 
                              water_depth=2.0, min_water_area=100,
-                             connect_water_regions=False, max_connection_gap=2):
+                             connect_water_regions=False, max_connection_gap=2,
+                             remove_small_components=True, min_component_size=100):
         """
         Generate a 3D terrain model from SRTM elevation data.
         
@@ -652,6 +674,8 @@ class ModelGenerator:
             min_water_area (int): Minimum number of connected pixels to be considered a water body
             connect_water_regions (bool): Whether to connect nearby water regions
             max_connection_gap (int): Maximum gap to bridge between water regions
+            remove_small_components (bool): Whether to remove small disconnected components
+            min_component_size (int): Minimum number of faces for a component to be kept
             
         Returns:
             dict: Dictionary containing generated meshes and data:
@@ -662,27 +686,20 @@ class ModelGenerator:
         """
         print("=== Terrain Model Generation ===")
         print(f"Bounds: {bounds}")
-        print(f"Base height: {base_height}")
-        print(f"Elevation multiplier: {elevation_multiplier}")
-        print(f"Downsample factor: {downsample_factor}")
         print(f"Water extraction: {extract_water}")
         
         # Get elevation data from SRTM
-        print("Loading elevation data from SRTM...")
+        print("Loading elevation data...")
         elevation_data = self.elevation_map.get_elevation_data(bounds, topo_dir)
         
-        print(f"Original elevation data shape: {elevation_data.shape}")
-        print(f"Original elevation range: {elevation_data.min():.3f} to {elevation_data.max():.3f} meters")
+        print(f"Elevation data: {elevation_data.shape}, range: {elevation_data.min():.1f} to {elevation_data.max():.1f} m")
         
         # Downsample elevation data for faster processing
         if downsample_factor > 1:
             elevation_data = self._downsample_elevation_data(elevation_data, downsample_factor)
         
-        print(f"Final elevation data shape: {elevation_data.shape}")
-        print(f"Final elevation range: {elevation_data.min():.3f} to {elevation_data.max():.3f} meters")
-        
         # Create 3D mesh from elevation data
-        print("Creating 3D mesh from elevation data...")
+        print("Creating 3D mesh...")
         mesh = self.create_mesh_from_elevation(elevation_data, bounds, base_height, elevation_multiplier)
         
         # Initialize result dictionary
@@ -695,7 +712,6 @@ class ModelGenerator:
         
         # Extract water features if requested
         if extract_water:
-            print("Extracting water features...")
             modified_terrain, water_mesh, water_mask = self.create_water_features(
                 mesh, elevation_data, bounds,
                 water_threshold=water_threshold,
@@ -705,7 +721,9 @@ class ModelGenerator:
                 min_water_area=min_water_area,
                 output_prefix=output_prefix,
                 connect_water_regions=connect_water_regions,
-                max_connection_gap=max_connection_gap
+                max_connection_gap=max_connection_gap,
+                remove_small_components=remove_small_components,
+                min_component_size=min_component_size
             )
             
             # Update result with water features
@@ -715,84 +733,15 @@ class ModelGenerator:
         else:
             # Save the standard mesh
             output_file = f"{output_prefix}.obj"
-            print("Saving mesh file...")
+            print("Saving mesh...")
             try:
                 self.save_mesh(mesh, output_file)
             except Exception as e:
                 print(f"Failed to save {output_file}: {e}")
         
-        print(f"\n✓ Terrain model generation complete!")
-        if not extract_water:
-            print(f"Generated file: {output_prefix}.obj")
+        print("Terrain model generation complete!")
         
         return result
-
-    def analyze_mesh_connectivity(self, mesh, output_prefix="mesh_analysis"):
-        """
-        Analyze mesh connectivity and identify potential issues like dangling faces.
-        
-        Args:
-            mesh (meshlib.mrmeshpy.Mesh): The mesh to analyze
-            output_prefix (str): Prefix for diagnostic output files
-            
-        Returns:
-            dict: Analysis results with connectivity information
-        """
-        print(f"\n=== Mesh Connectivity Analysis ===")
-        
-        # Get mesh topology information
-        topology = mesh.topology
-        total_faces = topology.numValidFaces()
-        total_vertices = mesh.points.size()
-        
-        print(f"Mesh statistics:")
-        print(f"  Total vertices: {total_vertices}")
-        print(f"  Total faces: {total_faces}")
-        
-        # Check for non-manifold edges (edges shared by more than 2 faces)
-        non_manifold_edges = 0
-        boundary_edges = 0
-        
-        try:
-            # Use meshlib to check for boundary and non-manifold topology
-            boundary_vertices = mr.getBoundaryVerts(topology)
-            boundary_count = boundary_vertices.count()
-            print(f"  Boundary vertices: {boundary_count}")
-            
-            # Check if mesh has holes or multiple components
-            components = mr.getAllComponents(mesh)
-            print(f"  Connected components: {len(components)}")
-            
-            if len(components) > 1:
-                print("  ⚠️  WARNING: Mesh has multiple disconnected components!")
-                for i, component in enumerate(components):
-                    component_size = component.count() if hasattr(component, 'count') else len(component)
-                    print(f"    Component {i}: {component_size} faces")
-            
-            # Save component information
-            analysis_results = {
-                'total_vertices': total_vertices,
-                'total_faces': total_faces,
-                'boundary_vertices': boundary_count,
-                'connected_components': len(components),
-                'component_sizes': [comp.count() if hasattr(comp, 'count') else len(comp) for comp in components] if len(components) > 1 else [total_faces]
-            }
-            
-            if len(components) > 1:
-                print(f"  ℹ️  Multiple components detected - this may cause 'dangling faces'")
-                print(f"     This typically happens when water extraction creates isolated terrain pieces")
-                
-        except Exception as e:
-            print(f"  Error during topology analysis: {e}")
-            analysis_results = {
-                'total_vertices': total_vertices,
-                'total_faces': total_faces,
-                'boundary_vertices': 'unknown',
-                'connected_components': 'unknown',
-                'error': str(e)
-            }
-        
-        return analysis_results
 
     def _connect_water_regions(self, water_mask, max_gap=2):
         """
@@ -819,13 +768,11 @@ class ModelGenerator:
             # Fill the dilated area but only connect existing water regions
             connected_mask = dilated
             
-            print(f"Connected water regions by bridging gaps up to {max_gap} pixels")
-            
             # Count connected components before and after
             original_components = len(np.unique(label(water_mask))) - 1  # -1 for background
             new_components = len(np.unique(label(connected_mask))) - 1
             
-            print(f"Water components: {original_components} → {new_components}")
+            print(f"Connected water regions: {original_components} → {new_components} components")
         
         return connected_mask
 
@@ -838,40 +785,40 @@ def main():
     generator = ModelGenerator()
     
     # Example 1: Generate standard terrain model
-    print("=== Example 1: Standard Terrain Generation ===")
+    print("=== Example 1: Standard Terrain ===")
     bounds = (-122.5, 37.7, -122.4, 37.8)  # San Francisco area
     standard_result = generator.generate_terrain_model(
         bounds=bounds,
         topo_dir="topo",
-        base_height=10.0,           # 10 unit base height
-        elevation_multiplier=1.0,   # Default elevation multiplier
-        downsample_factor=10,       # Default downsampling
+        base_height=10.0,
+        elevation_multiplier=1.0,
+        downsample_factor=10,
         output_prefix="sf_terrain_standard",
-        extract_water=False         # Standard generation without water
+        extract_water=False
     )
     
     # Example 2: Generate terrain with water features
-    print("\n=== Example 2: Terrain with Water Feature Extraction ===")
-    # Use a coastal area that's likely to have water features
+    print("\n=== Example 2: Terrain with Water ===")
     bounds_coastal = (-122.6, 37.6, -122.3, 37.9)  # Larger SF Bay area
     water_result = generator.generate_terrain_model(
         bounds=bounds_coastal,
         topo_dir="topo",
         base_height=5.0,
-        elevation_multiplier=2.0,   # Exaggerate elevation for better visualization
-        downsample_factor=8,        # Slightly higher resolution for water detection
+        elevation_multiplier=2.0,
+        downsample_factor=8,
         output_prefix="sf_bay_area_water",
-        extract_water=True,         # Enable water extraction
-        water_threshold=5.0,        # Areas below 5 meters considered water
-        water_depth=3.0,            # Lower water areas by 3 meters
-        min_water_area=50,          # Minimum water body size
-        connect_water_regions=True, # Connect nearby water regions
-        max_connection_gap=2       # Maximum gap to bridge between water regions
+        extract_water=True,
+        water_threshold=5.0,
+        water_depth=3.0,
+        min_water_area=50,
+        connect_water_regions=True,
+        max_connection_gap=2,
+        remove_small_components=True,
+        min_component_size=100
     )
     
-    # Example 3: Automatic water detection (no threshold specified)
-    print("\n=== Example 3: Automatic Water Detection ===")
-    # Example for a lake area or river delta
+    # Example 3: Automatic water detection
+    print("\n=== Example 3: Auto Water Detection ===")
     bounds_lake = (-122.55, 37.75, -122.45, 37.85)  # Central SF area
     auto_water_result = generator.generate_terrain_model(
         bounds=bounds_lake,
@@ -881,40 +828,16 @@ def main():
         downsample_factor=12,
         output_prefix="sf_auto_water",
         extract_water=True,
-        water_threshold=None,       # Automatic detection using percentiles
+        water_threshold=None,  # Automatic detection
         water_depth=2.0,
         min_water_area=25,
-        connect_water_regions=True, # Connect nearby water regions
-        max_connection_gap=2       # Maximum gap to bridge between water regions
+        connect_water_regions=True,
+        max_connection_gap=2,
+        remove_small_components=True,
+        min_component_size=50
     )
     
-    # Report results
-    print("\n=== Generation Summary ===")
-    print(f"Standard terrain mesh: {standard_result['terrain_mesh'].points.size()} vertices")
-    
-    if water_result['water_mesh'] is not None:
-        print(f"Bay area terrain mesh: {water_result['terrain_mesh'].points.size()} vertices")
-        print(f"Bay area water mesh: {water_result['water_mesh'].points.size()} vertices")
-        water_pixels = np.sum(water_result['water_mask'])
-        total_pixels = water_result['water_mask'].size
-        print(f"Water coverage: {water_pixels}/{total_pixels} pixels ({100*water_pixels/total_pixels:.1f}%)")
-    
-    if auto_water_result['water_mesh'] is not None:
-        print(f"Auto-detect terrain mesh: {auto_water_result['terrain_mesh'].points.size()} vertices")
-        print(f"Auto-detect water mesh: {auto_water_result['water_mesh'].points.size()} vertices")
-        water_pixels_auto = np.sum(auto_water_result['water_mask'])
-        total_pixels_auto = auto_water_result['water_mask'].size
-        print(f"Auto water coverage: {water_pixels_auto}/{total_pixels_auto} pixels ({100*water_pixels_auto/total_pixels_auto:.1f}%)")
-    
     print("\nAll examples completed successfully!")
-    print("\nGenerated files:")
-    print("- sf_terrain_standard.obj (standard terrain)")
-    print("- sf_bay_area_water_with_water.obj (modified terrain)")  
-    print("- sf_bay_area_water_water.obj (water surface)")
-    print("- sf_bay_area_water_water_mask.npy (water mask)")
-    print("- sf_auto_water_with_water.obj (auto-detect terrain)")
-    print("- sf_auto_water_water.obj (auto-detect water)")
-    print("- sf_auto_water_water_mask.npy (auto-detect water mask)")
 
 
 if __name__ == "__main__":
