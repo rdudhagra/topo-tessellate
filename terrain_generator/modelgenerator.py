@@ -220,60 +220,80 @@ class ModelGenerator:
                     faces.append([v0, v2, v1])
                     faces.append([v1, v2, v3])
         
-        # Step 4: Create side walls by finding boundary edges
-        # For each water pixel, check its 4 neighbors and create side walls where needed
+        # Step 4: Create side walls using a more robust approach
+        # Create side walls for every boundary edge of water regions
         for y in range(height):
             for x in range(width):
                 if water_mask[y, x]:
-                    # Check each of the 4 directions for boundary edges
                     
-                    # North edge (top of pixel)
-                    if (y == 0 or not water_mask[y-1, x]) and x < width - 1 and water_mask[y, x+1]:
-                        # This pixel and its right neighbor both have water, and there's a boundary to the north
-                        tl = top_vertex_indices[(y, x)]
-                        tr = top_vertex_indices[(y, x+1)]
-                        bl = bottom_vertex_indices[(y, x)]
-                        br = bottom_vertex_indices[(y, x+1)]
-                        
-                        # Create outward-facing quad (normal points north)
-                        faces.append([tl, bl, tr])
-                        faces.append([bl, br, tr])
+                    # For each water pixel, check each of its 4 edges
+                    # and create a side wall if that edge is a boundary
                     
-                    # South edge (bottom of pixel)
-                    if (y == height - 1 or not water_mask[y+1, x]) and x < width - 1 and water_mask[y, x+1]:
-                        # This pixel and its right neighbor both have water, and there's a boundary to the south
-                        tl = top_vertex_indices[(y, x)]
-                        tr = top_vertex_indices[(y, x+1)]
-                        bl = bottom_vertex_indices[(y, x)]
-                        br = bottom_vertex_indices[(y, x+1)]
+                    # North edge: check if there's a boundary to the north
+                    if y == 0 or not water_mask[y-1, x]:
+                        # This is a north boundary edge - create wall segment
+                        # Get vertices for this pixel's north edge
+                        top_left = top_vertex_indices[(y, x)]
+                        bottom_left = bottom_vertex_indices[(y, x)]
                         
-                        # Create outward-facing quad (normal points south)
-                        faces.append([tl, tr, bl])
-                        faces.append([bl, tr, br])
+                        # Check if there's a water pixel to the right
+                        if x < width - 1:
+                            if water_mask[y, x+1]:
+                                # Connect to the next water pixel's north edge
+                                top_right = top_vertex_indices[(y, x+1)]
+                                bottom_right = bottom_vertex_indices[(y, x+1)]
+                                
+                                # Create wall quad (outward normal pointing north)
+                                faces.append([top_left, bottom_left, top_right])
+                                faces.append([bottom_left, bottom_right, top_right])
                     
-                    # West edge (left of pixel)
-                    if (x == 0 or not water_mask[y, x-1]) and y < height - 1 and water_mask[y+1, x]:
-                        # This pixel and its bottom neighbor both have water, and there's a boundary to the west
-                        tb = top_vertex_indices[(y, x)]
-                        tt = top_vertex_indices[(y+1, x)]
-                        bb = bottom_vertex_indices[(y, x)]
-                        bt = bottom_vertex_indices[(y+1, x)]
+                    # South edge: check if there's a boundary to the south  
+                    if y == height - 1 or not water_mask[y+1, x]:
+                        # This is a south boundary edge - create wall segment
+                        top_left = top_vertex_indices[(y, x)]
+                        bottom_left = bottom_vertex_indices[(y, x)]
                         
-                        # Create outward-facing quad (normal points west)
-                        faces.append([tb, tt, bb])
-                        faces.append([bb, tt, bt])
+                        if x < width - 1:
+                            if water_mask[y, x+1]:
+                                # Connect to the next water pixel's south edge
+                                top_right = top_vertex_indices[(y, x+1)]
+                                bottom_right = bottom_vertex_indices[(y, x+1)]
+                                
+                                # Create wall quad (outward normal pointing south)
+                                faces.append([top_left, top_right, bottom_left])
+                                faces.append([bottom_left, top_right, bottom_right])
                     
-                    # East edge (right of pixel)
-                    if (x == width - 1 or not water_mask[y, x+1]) and y < height - 1 and water_mask[y+1, x]:
-                        # This pixel and its bottom neighbor both have water, and there's a boundary to the east
-                        tb = top_vertex_indices[(y, x)]
-                        tt = top_vertex_indices[(y+1, x)]
-                        bb = bottom_vertex_indices[(y, x)]
-                        bt = bottom_vertex_indices[(y+1, x)]
+                    # West edge: check if there's a boundary to the west
+                    if x == 0 or not water_mask[y, x-1]:
+                        # This is a west boundary edge - create wall segment
+                        top_left = top_vertex_indices[(y, x)]
+                        bottom_left = bottom_vertex_indices[(y, x)]
                         
-                        # Create outward-facing quad (normal points east)
-                        faces.append([tb, bb, tt])
-                        faces.append([bb, bt, tt])
+                        if y < height - 1:
+                            if water_mask[y+1, x]:
+                                # Connect to the next water pixel's west edge
+                                top_right = top_vertex_indices[(y+1, x)]
+                                bottom_right = bottom_vertex_indices[(y+1, x)]
+                                
+                                # Create wall quad (outward normal pointing west)
+                                faces.append([top_left, top_right, bottom_left])
+                                faces.append([top_right, bottom_right, bottom_left])
+                    
+                    # East edge: check if there's a boundary to the east
+                    if x == width - 1 or not water_mask[y, x+1]:
+                        # This is an east boundary edge - create wall segment
+                        top_left = top_vertex_indices[(y, x)]
+                        bottom_left = bottom_vertex_indices[(y, x)]
+                        
+                        if y < height - 1:
+                            if water_mask[y+1, x]:
+                                # Connect to the next water pixel's east edge
+                                top_right = top_vertex_indices[(y+1, x)]
+                                bottom_right = bottom_vertex_indices[(y+1, x)]
+                                
+                                # Create wall quad (outward normal pointing east)
+                                faces.append([top_left, bottom_left, top_right])
+                                faces.append([bottom_left, bottom_right, top_right])
         
         if not vertices:
             print("Warning: No water vertices found, creating empty water mesh")
@@ -349,7 +369,8 @@ class ModelGenerator:
     def create_water_features(self, mesh, elevation_data, bounds, 
                             water_threshold=None, water_depth=2.0, 
                             base_height=1.0, elevation_multiplier=1.0,
-                            min_water_area=100, output_prefix="terrain"):
+                            min_water_area=100, output_prefix="terrain",
+                            connect_water_regions=False, max_connection_gap=2):
         """
         Extract water regions from the mesh and create separate water objects.
         
@@ -367,6 +388,8 @@ class ModelGenerator:
             elevation_multiplier (float): Elevation scaling multiplier used in original mesh
             min_water_area (int): Minimum number of connected pixels to be considered a water body
             output_prefix (str): Prefix for output filenames
+            connect_water_regions (bool): Whether to connect nearby water regions
+            max_connection_gap (int): Maximum gap to bridge between water regions
             
         Returns:
             tuple: (modified_terrain_mesh, water_mesh, water_mask)
@@ -383,6 +406,11 @@ class ModelGenerator:
         if not np.any(water_mask):
             print("No significant water areas detected.")
             return mesh, None, water_mask
+        
+        # Step 1a: Optionally connect nearby water regions
+        if connect_water_regions:
+            print("Step 1a: Connecting nearby water regions...")
+            water_mask = self._connect_water_regions(water_mask, max_connection_gap)
         
         # Step 2: Lower terrain at water locations
         print("Step 2: Lowering terrain at water locations...")
@@ -401,6 +429,14 @@ class ModelGenerator:
         
         # Step 4: Save results
         print("Step 4: Saving water feature results...")
+        
+        # Analyze mesh connectivity to check for issues
+        print("Step 4a: Analyzing terrain mesh connectivity...")
+        terrain_analysis = self.analyze_mesh_connectivity(modified_terrain, f"{output_prefix}_terrain")
+        
+        if water_mesh is not None:
+            print("Step 4b: Analyzing water mesh connectivity...")
+            water_analysis = self.analyze_mesh_connectivity(water_mesh, f"{output_prefix}_water")
         
         # Save modified terrain
         terrain_file = f"{output_prefix}_with_water.obj"
@@ -598,7 +634,8 @@ class ModelGenerator:
                              elevation_multiplier=1.0,
                              downsample_factor=10, output_prefix="terrain_model",
                              extract_water=False, water_threshold=None, 
-                             water_depth=2.0, min_water_area=100):
+                             water_depth=2.0, min_water_area=100,
+                             connect_water_regions=False, max_connection_gap=2):
         """
         Generate a 3D terrain model from SRTM elevation data.
         
@@ -613,6 +650,8 @@ class ModelGenerator:
             water_threshold (float, optional): Elevation below which areas are considered water
             water_depth (float): How much to lower water areas below original elevation (meters)
             min_water_area (int): Minimum number of connected pixels to be considered a water body
+            connect_water_regions (bool): Whether to connect nearby water regions
+            max_connection_gap (int): Maximum gap to bridge between water regions
             
         Returns:
             dict: Dictionary containing generated meshes and data:
@@ -664,7 +703,9 @@ class ModelGenerator:
                 base_height=base_height,
                 elevation_multiplier=elevation_multiplier,
                 min_water_area=min_water_area,
-                output_prefix=output_prefix
+                output_prefix=output_prefix,
+                connect_water_regions=connect_water_regions,
+                max_connection_gap=max_connection_gap
             )
             
             # Update result with water features
@@ -685,6 +726,108 @@ class ModelGenerator:
             print(f"Generated file: {output_prefix}.obj")
         
         return result
+
+    def analyze_mesh_connectivity(self, mesh, output_prefix="mesh_analysis"):
+        """
+        Analyze mesh connectivity and identify potential issues like dangling faces.
+        
+        Args:
+            mesh (meshlib.mrmeshpy.Mesh): The mesh to analyze
+            output_prefix (str): Prefix for diagnostic output files
+            
+        Returns:
+            dict: Analysis results with connectivity information
+        """
+        print(f"\n=== Mesh Connectivity Analysis ===")
+        
+        # Get mesh topology information
+        topology = mesh.topology
+        total_faces = topology.numValidFaces()
+        total_vertices = mesh.points.size()
+        
+        print(f"Mesh statistics:")
+        print(f"  Total vertices: {total_vertices}")
+        print(f"  Total faces: {total_faces}")
+        
+        # Check for non-manifold edges (edges shared by more than 2 faces)
+        non_manifold_edges = 0
+        boundary_edges = 0
+        
+        try:
+            # Use meshlib to check for boundary and non-manifold topology
+            boundary_vertices = mr.getBoundaryVerts(topology)
+            boundary_count = boundary_vertices.count()
+            print(f"  Boundary vertices: {boundary_count}")
+            
+            # Check if mesh has holes or multiple components
+            components = mr.getAllComponents(mesh)
+            print(f"  Connected components: {len(components)}")
+            
+            if len(components) > 1:
+                print("  ⚠️  WARNING: Mesh has multiple disconnected components!")
+                for i, component in enumerate(components):
+                    component_size = component.count() if hasattr(component, 'count') else len(component)
+                    print(f"    Component {i}: {component_size} faces")
+            
+            # Save component information
+            analysis_results = {
+                'total_vertices': total_vertices,
+                'total_faces': total_faces,
+                'boundary_vertices': boundary_count,
+                'connected_components': len(components),
+                'component_sizes': [comp.count() if hasattr(comp, 'count') else len(comp) for comp in components] if len(components) > 1 else [total_faces]
+            }
+            
+            if len(components) > 1:
+                print(f"  ℹ️  Multiple components detected - this may cause 'dangling faces'")
+                print(f"     This typically happens when water extraction creates isolated terrain pieces")
+                
+        except Exception as e:
+            print(f"  Error during topology analysis: {e}")
+            analysis_results = {
+                'total_vertices': total_vertices,
+                'total_faces': total_faces,
+                'boundary_vertices': 'unknown',
+                'connected_components': 'unknown',
+                'error': str(e)
+            }
+        
+        return analysis_results
+
+    def _connect_water_regions(self, water_mask, max_gap=2):
+        """
+        Connect nearby water regions to reduce disconnected components.
+        
+        Args:
+            water_mask (numpy.ndarray): Boolean mask indicating water areas
+            max_gap (int): Maximum gap to bridge between water regions
+            
+        Returns:
+            numpy.ndarray: Modified water mask with connected regions
+        """
+        from scipy.ndimage import binary_dilation
+        from skimage.measure import label
+        
+        # Create a copy to work with
+        connected_mask = water_mask.copy()
+        
+        # Dilate the water mask to bridge small gaps
+        if max_gap > 0:
+            # Use multiple iterations of dilation to bridge gaps
+            dilated = binary_dilation(water_mask, iterations=max_gap)
+            
+            # Fill the dilated area but only connect existing water regions
+            connected_mask = dilated
+            
+            print(f"Connected water regions by bridging gaps up to {max_gap} pixels")
+            
+            # Count connected components before and after
+            original_components = len(np.unique(label(water_mask))) - 1  # -1 for background
+            new_components = len(np.unique(label(connected_mask))) - 1
+            
+            print(f"Water components: {original_components} → {new_components}")
+        
+        return connected_mask
 
 
 def main():
@@ -721,7 +864,9 @@ def main():
         extract_water=True,         # Enable water extraction
         water_threshold=5.0,        # Areas below 5 meters considered water
         water_depth=3.0,            # Lower water areas by 3 meters
-        min_water_area=50           # Minimum water body size
+        min_water_area=50,          # Minimum water body size
+        connect_water_regions=True, # Connect nearby water regions
+        max_connection_gap=2       # Maximum gap to bridge between water regions
     )
     
     # Example 3: Automatic water detection (no threshold specified)
@@ -738,7 +883,9 @@ def main():
         extract_water=True,
         water_threshold=None,       # Automatic detection using percentiles
         water_depth=2.0,
-        min_water_area=25
+        min_water_area=25,
+        connect_water_regions=True, # Connect nearby water regions
+        max_connection_gap=2       # Maximum gap to bridge between water regions
     )
     
     # Report results
