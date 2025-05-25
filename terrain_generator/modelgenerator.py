@@ -263,7 +263,7 @@ class ModelGenerator:
         print(f"Modified {modified_count} vertices for water depression")
         
         # Create new mesh with modified vertices
-        faces = mn.getNumpyFaces(mesh)
+        faces = mn.getNumpyFaces(mesh.topology)
         modified_mesh = mn.meshFromFacesVerts(faces, points)
         
         return modified_mesh
@@ -339,20 +339,11 @@ class ModelGenerator:
             except Exception as e:
                 print(f"Failed to save water mesh: {e}")
         
-        # Save water mask as numpy array for further analysis
-        try:
-            mask_file = f"{output_prefix}_water_mask.npy"
-            np.save(mask_file, water_mask)
-            print(f"Water mask saved to: {mask_file}")
-        except Exception as e:
-            print(f"Failed to save water mask: {e}")
-        
         print(f"\n✓ Water feature extraction complete!")
         print(f"Generated files:")
         print(f"  - Modified terrain: {terrain_file}")
         if water_mesh is not None and water_mesh.points.size() > 1:
             print(f"  - Water surface: {water_file}")
-        print(f"  - Water mask: {mask_file}")
         
         return modified_terrain, water_mesh, water_mask
     
