@@ -171,9 +171,9 @@ def generate_bay_area():
     terrain_mesh = generate_terrain()
     
     # Extract buildings and create visualization
-    buildings = extract_buildings(bounds)
+    # buildings = extract_buildings(bounds)
     
-    return terrain_mesh, buildings
+    return terrain_mesh
 
 
 if __name__ == "__main__":
