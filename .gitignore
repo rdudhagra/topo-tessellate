@@ -22,6 +22,8 @@ var/
 venv/
 .venv/
 ENV/
+*.pkl
+*.pkl.gz
 
 # Distribution / packaging
 .Python

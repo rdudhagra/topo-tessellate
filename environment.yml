@@ -12,6 +12,7 @@ dependencies:
   - tqdm
   - cadquery
   - geopy
+  - requests
   - pip
   - pip:
     - git+https://github.com/JustinSDK/cqMore
