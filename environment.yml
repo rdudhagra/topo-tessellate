@@ -10,8 +10,8 @@ dependencies:
   - scipy
   - matplotlib
   - tqdm
-  - pyproj
   - cadquery
+  - geopy
   - pip
   - pip:
     - git+https://github.com/JustinSDK/cqMore

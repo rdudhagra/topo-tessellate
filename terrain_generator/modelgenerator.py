@@ -9,6 +9,7 @@ using the meshlib library. It integrates with the ElevationMap class to use real
 import numpy as np
 import meshlib.mrmeshpy as mr
 import meshlib.mrmeshnumpy as mn
+from geopy.distance import geodesic
 
 # Handle both direct execution and module import
 try:
@@ -35,6 +36,30 @@ class ModelGenerator:
         """
         self.elevation_map = elevation_map or ElevationMap()
     
+    def _calculate_bounds_dimensions_meters(self, bounds):
+        """
+        Calculate the real-world dimensions of geographic bounds in meters using geopy.
+        
+        Args:
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat)
+            
+        Returns:
+            tuple: (width_meters, height_meters)
+        """
+        min_lon, min_lat, max_lon, max_lat = bounds
+        
+        # Calculate width (longitude difference) in meters
+        # Use center latitude for calculation
+        center_lat = (min_lat + max_lat) / 2
+        width_meters = geodesic((center_lat, min_lon), (center_lat, max_lon)).meters
+        
+        # Calculate height (latitude difference) in meters
+        # Use center longitude for calculation  
+        center_lon = (min_lon + max_lon) / 2
+        height_meters = geodesic((min_lat, center_lon), (max_lat, center_lon)).meters
+        
+        return width_meters, height_meters
+    
     def _downsample_elevation_data(self, elevation_data, downsample_factor=10):
         """
         Downsample elevation data for faster processing.
@@ -57,37 +82,41 @@ class ModelGenerator:
         
         return downsampled
     
-    def create_mesh_from_elevation(self, elevation_data, base_height=1.0, 
-                                 elevation_scale_ratio=0.02):
+    def create_mesh_from_elevation(self, elevation_data, bounds, base_height=1.0, 
+                                 elevation_multiplier=1.0):
         """
         Create a 3D mesh from elevation data with a flat base using meshlib.
         
         Args:
             elevation_data (numpy.ndarray): 2D array of elevation values
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
             base_height (float): Height of the flat base
-            elevation_scale_ratio (float): Ratio of elevation scale to max(width, length)
+            elevation_multiplier (float): Multiplier for realistic elevation scaling (1.0 = realistic scale)
             
         Returns:
             meshlib.mrmeshpy.Mesh: The generated 3D mesh
         """
         height, width = elevation_data.shape
-        max_dimension = max(width, height)
         
-        # Fixed scale factor (no longer parameterized)
-        scale_factor = 1.0
+        # Calculate real-world dimensions of the bounds
+        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
         
-        # Calculate elevation scaling based on actual world coordinates, not grid dimensions
-        max_world_dimension = max_dimension * scale_factor
+        # Calculate scale factor to fit real-world dimensions to grid
+        # This makes 1 grid unit = actual meters in the real world
+        scale_x = width_meters / width
+        scale_y = height_meters / height
+        
+        # For realistic elevation scaling: 1 meter elevation = 1 meter in model
+        # The elevation_multiplier allows scaling from this realistic baseline
         elevation_range = elevation_data.max() - elevation_data.min()
-        if elevation_range > 0:
-            elevation_scale = (max_world_dimension * elevation_scale_ratio) / elevation_range
-        else:
-            elevation_scale = 1.0
+        elevation_scale = elevation_multiplier  # Direct multiplier of realistic scale
             
         print(f"Grid dimensions: {width}x{height}")
-        print(f"World dimensions: {width * scale_factor:.3f} x {height * scale_factor:.3f}")
-        print(f"Elevation scaling: {elevation_scale:.6f} (ratio: {elevation_scale_ratio})")
-        print(f"Elevation range: {elevation_data.min():.1f} to {elevation_data.max():.1f}")
+        print(f"Real-world dimensions: {width_meters/1000:.2f} km x {height_meters/1000:.2f} km")
+        print(f"Grid scale: {scale_x:.2f} m/unit (x), {scale_y:.2f} m/unit (y)")
+        print(f"Elevation range: {elevation_data.min():.1f} to {elevation_data.max():.1f} meters")
+        print(f"Elevation scaling: {elevation_scale:.6f} (multiplier: {elevation_multiplier})")
+        print(f"Max elevation in model: {elevation_range * elevation_scale:.1f} units")
         
         # Create vertices in a structured way
         vertices = []
@@ -95,17 +124,17 @@ class ModelGenerator:
         # Add top surface vertices (elevation surface)
         for y in range(height):
             for x in range(width):
-                point_x = x * scale_factor
-                point_y = y * scale_factor
-                # Scale elevation relative to terrain dimensions
+                point_x = x * scale_x
+                point_y = y * scale_y
+                # Scale elevation with realistic scaling multiplied by user multiplier
                 point_z = (elevation_data[y, x] - elevation_data.min()) * elevation_scale + base_height
                 vertices.append([point_x, point_y, point_z])
         
         # Add bottom surface vertices (flat base) 
         for y in range(height):
             for x in range(width):
-                point_x = x * scale_factor
-                point_y = y * scale_factor
+                point_x = x * scale_x
+                point_y = y * scale_y
                 point_z = 0.0  # Flat base at z=0
                 vertices.append([point_x, point_y, point_z])
         
@@ -223,7 +252,7 @@ class ModelGenerator:
             print(f"Failed to save mesh to: {filename} - Error: {e}")
     
     def generate_terrain_model(self, bounds, topo_dir="topo", base_height=1.0, 
-                             elevation_scale_ratio=0.02,
+                             elevation_multiplier=1.0,
                              downsample_factor=10, output_prefix="terrain_model"):
         """
         Generate a 3D terrain model from SRTM elevation data.
@@ -232,7 +261,7 @@ class ModelGenerator:
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
             topo_dir (str): Directory containing SRTM data files
             base_height (float): Height of the flat base
-            elevation_scale_ratio (float): Ratio of elevation scale to max(width, length) (default: 0.02)
+            elevation_multiplier (float): Multiplier for realistic elevation scaling (1.0 = realistic scale)
             downsample_factor (int): Factor to downsample elevation data (default: 10)
             output_prefix (str): Prefix for output filename
             
@@ -242,7 +271,7 @@ class ModelGenerator:
         print("=== Terrain Model Generation ===")
         print(f"Bounds: {bounds}")
         print(f"Base height: {base_height}")
-        print(f"Elevation scale ratio: {elevation_scale_ratio}")
+        print(f"Elevation multiplier: {elevation_multiplier}")
         print(f"Downsample factor: {downsample_factor}")
         
         # Get elevation data from SRTM
@@ -261,7 +290,7 @@ class ModelGenerator:
         
         # Create 3D mesh from elevation data
         print("Creating 3D mesh from elevation data...")
-        mesh = self.create_mesh_from_elevation(elevation_data, base_height, elevation_scale_ratio)
+        mesh = self.create_mesh_from_elevation(elevation_data, bounds, base_height, elevation_multiplier)
         
         # Save the mesh as OBJ file only
         output_file = f"{output_prefix}.obj"
@@ -293,7 +322,7 @@ def main():
         bounds=bounds,
         topo_dir="topo",
         base_height=10.0,           # 10 unit base height
-        elevation_scale_ratio=0.02, # Default elevation scaling
+        elevation_multiplier=1.0,   # Default elevation multiplier
         downsample_factor=10,       # Default downsampling
         output_prefix="example_terrain"
     )

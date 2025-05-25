@@ -1,20 +1,18 @@
 import os
 import numpy as np
 import rasterio
-from pyproj import Transformer
 import glob
 import concurrent.futures
 import multiprocessing
 import time
 import numpy as np
+from geopy.distance import geodesic
 
 
 class ElevationMap:
     def __init__(self):
-        """Initialize the ElevationMap with coordinate transformer."""
-        self.transformer = Transformer.from_crs(
-            "EPSG:4326", "EPSG:3857", always_xy=True
-        )
+        """Initialize the ElevationMap without coordinate transformer."""
+        pass
 
     def _find_required_tiles(self, bounds):
         """
@@ -155,8 +153,8 @@ class ElevationMap:
         # Stitch the tiles with standard SRTM arrangement
         elevation_data = self._stitch_srtm_tiles(tile_files)
 
-        # Crop the stitched tiles to the bounds
-        elevation_data = self._crop_elevation_data(elevation_data, bounds)
+        # Crop the stitched tiles to the bounds using simple geographic coordinates
+        elevation_data = self._crop_elevation_data(elevation_data, bounds, tile_files)
 
         return elevation_data
 
@@ -253,39 +251,61 @@ class ElevationMap:
 
         return merged_data
 
-    def _crop_elevation_data(self, elevation_data, bounds):
+    def _crop_elevation_data(self, elevation_data, bounds, tile_files):
         """
-        Crop the elevation data to the given bounds.
+        Crop the elevation data to the given bounds
 
         Args:
             elevation_data (numpy.ndarray): The elevation data to crop
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat)
+            tile_files (dict): Dictionary mapping (lat, lon) to file paths
         """
-
-        # Convert bounds to x, y coordinates
         min_lon, min_lat, max_lon, max_lat = bounds
 
-        min_x, min_y = self.transformer.transform(min_lon, min_lat)
-        max_x, max_y = self.transformer.transform(max_lon, max_lat)
-
-        # Convert SRTM bounds to x, y coordinates
+        # Convert SRTM bounds to geographic coordinates (equivalent to original srtm bounds)
         srtm_min_lon, srtm_min_lat = np.floor(min_lon), np.floor(min_lat)
         srtm_max_lon, srtm_max_lat = np.ceil(max_lon), np.ceil(max_lat)
 
-        srtm_min_x, srtm_min_y = self.transformer.transform(srtm_min_lon, srtm_min_lat)
-        srtm_max_x, srtm_max_y = self.transformer.transform(srtm_max_lon, srtm_max_lat)
+        # Calculate real-world dimensions using geopy (replaces transformer.transform)
+        # Use center points for accurate distance calculations
+        center_lat = (srtm_min_lat + srtm_max_lat) / 2
+        center_lon = (srtm_min_lon + srtm_max_lon) / 2
 
-        # Calculate the scale of the elevation data
+        # Convert bounds to "x, y coordinates" using geopy distances (replaces transformer)
+        # Use a reference point (srtm_min) and calculate distances from there
+        ref_point = (srtm_min_lat, srtm_min_lon)
+        
+        # Calculate distances for crop bounds
+        min_x = geodesic(ref_point, (srtm_min_lat, min_lon)).meters
+        min_y = geodesic(ref_point, (min_lat, srtm_min_lon)).meters
+        max_x = geodesic(ref_point, (srtm_min_lat, max_lon)).meters  
+        max_y = geodesic(ref_point, (max_lat, srtm_min_lon)).meters
+
+        # Calculate distances for SRTM bounds
+        srtm_min_x = geodesic(ref_point, (srtm_min_lat, srtm_min_lon)).meters  # This will be 0
+        srtm_min_y = geodesic(ref_point, (srtm_min_lat, srtm_min_lon)).meters  # This will be 0
+        srtm_max_x = geodesic(ref_point, (srtm_min_lat, srtm_max_lon)).meters
+        srtm_max_y = geodesic(ref_point, (srtm_max_lat, srtm_min_lon)).meters
+
+        # Calculate the scale of the elevation data (same as original)
         elevation_data_num_rows, elevation_data_num_cols = elevation_data.shape
 
         x_scale = elevation_data_num_cols / (srtm_max_x - srtm_min_x)
         y_scale = elevation_data_num_rows / (srtm_max_y - srtm_min_y)
 
-        # Calculate the indices of the elevation data to crop
+        # Calculate the indices of the elevation data to crop (same logic as original)
         elevation_data_min_index_x = int((min_x - srtm_min_x) * x_scale)
         elevation_data_min_index_y = int((min_y - srtm_min_y) * y_scale)
 
         elevation_data_max_index_x = elevation_data_num_cols - int((srtm_max_x - max_x) * x_scale)
         elevation_data_max_index_y = elevation_data_num_rows - int((srtm_max_y - max_y) * y_scale)
+
+        print(f"  Cropping elevation data using geopy (original logic):")
+        print(f"    Original shape: {elevation_data.shape}")
+        print(f"    SRTM bounds: lat {srtm_min_lat}-{srtm_max_lat}, lon {srtm_min_lon}-{srtm_max_lon}")
+        print(f"    Crop bounds: lat {min_lat}-{max_lat}, lon {min_lon}-{max_lon}")
+        print(f"    SRTM extent: {(srtm_max_x-srtm_min_x)/1000:.2f} km x {(srtm_max_y-srtm_min_y)/1000:.2f} km")
+        print(f"    Scale: {x_scale:.6f} pixels/meter (x), {y_scale:.6f} pixels/meter (y)")
+        print(f"    Crop indices: x {elevation_data_min_index_x}-{elevation_data_max_index_x}, y {elevation_data_min_index_y}-{elevation_data_max_index_y}")
 
         return elevation_data[elevation_data_min_index_y:elevation_data_max_index_y, elevation_data_min_index_x:elevation_data_max_index_x]
