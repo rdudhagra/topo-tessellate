@@ -146,12 +146,12 @@ def generate_terrain():
         mesh = generator.generate_terrain_model(
             bounds=bounds,
             topo_dir="topo",
-            base_height=0.1,
+            base_height=2500,
             extract_water=True,
-            water_threshold=0,
-            water_depth=100,
+            water_threshold=5,
+            water_depth=50,
             elevation_multiplier=5,
-            downsample_factor=5,
+            downsample_factor=1,
             output_prefix="bay_area_terrain",
         )
 

@@ -203,130 +203,48 @@ class ModelGenerator:
         water_surface = mn.meshFromFacesVerts(faces, vertices)
         
         return water_surface
-
+    
     def _extrude_water_surface(self, water_surface, water_depth, elevation_multiplier=1.0):
         """
-        Extrude the flat water surface to create a volume with thickness.
-        
-        Args:
-            water_surface (meshlib.mrmeshpy.Mesh): Flat water surface mesh
-            water_depth (float): Thickness/depth of water volume
-            elevation_multiplier (float): Elevation scaling multiplier
-            
-        Returns:
-            meshlib.mrmeshpy.Mesh: Extruded water volume mesh
+        Extrude the water surface to create a volume with thickness.
         """
-        if water_surface.points.size() <= 1:
-            return water_surface
-        
+        # Create a new mesh for the water volume
         water_volume = mr.copyMesh(water_surface)
+
+        # Extrude the water surface by the specified depth
         mr.addBaseToPlanarMesh(water_volume, -water_depth * elevation_multiplier)
-        
+
         return water_volume
 
-    def _find_boundary_edges(self, faces, num_verts):
+    def _modify_elevation_for_water(self, elevation_data, water_mask, water_depth=2.0):
         """
-        Find boundary edges of a mesh (edges that belong to only one face).
+        Modify elevation data directly by lowering water areas.
         
         Args:
-            faces (numpy.ndarray): Face indices
-            num_verts (int): Number of vertices
+            elevation_data (numpy.ndarray): 2D array of elevation values
+            water_mask (numpy.ndarray): Boolean mask indicating water areas
+            water_depth (float): How much to lower water areas (meters)
             
         Returns:
-            list: List of boundary edge tuples (v1, v2)
+            numpy.ndarray: Modified elevation data with lowered water areas
         """
-        # Count occurrences of each edge
-        edge_count = {}
+        modified_elevation = elevation_data.copy()
         
-        for face in faces:
-            edges = [
-                (min(face[0], face[1]), max(face[0], face[1])),
-                (min(face[1], face[2]), max(face[1], face[2])),
-                (min(face[2], face[0]), max(face[2], face[0]))
-            ]
+        if np.any(water_mask):
+            # Lower the elevation in water areas
+            modified_elevation[water_mask] -= water_depth
             
-            for edge in edges:
-                edge_count[edge] = edge_count.get(edge, 0) + 1
-        
-        # Find edges that appear only once (boundary edges)
-        boundary_edges = []
-        for edge, count in edge_count.items():
-            if count == 1:
-                boundary_edges.append(edge)
-        
-        return boundary_edges
-
-    def _subtract_water_from_terrain(self, terrain_mesh, water_volume):
-        """
-        Subtract the water volume from the terrain mesh using boolean operations.
-        
-        Args:
-            terrain_mesh (meshlib.mrmeshpy.Mesh): The terrain mesh
-            water_volume (meshlib.mrmeshpy.Mesh): The water volume mesh
-            
-        Returns:
-            meshlib.mrmeshpy.Mesh: Modified terrain mesh with water subtracted
-        """
-        if water_volume.points.size() <= 1:
-            return terrain_mesh
-        
-        try:
-            # Perform boolean difference operation (terrain - water)
-            boolean_result = mr.boolean(
-                terrain_mesh, 
-                water_volume, 
-                mr.BooleanOperation.DifferenceAB
+            # Ensure water areas don't go below the minimum terrain elevation
+            min_terrain_elevation = np.min(elevation_data[~water_mask]) if np.any(~water_mask) else elevation_data.min()
+            modified_elevation[water_mask] = np.maximum(
+                modified_elevation[water_mask], 
+                min_terrain_elevation - water_depth
             )
             
-            if boolean_result.valid():
-                print("Successfully subtracted water volume from terrain")
-                return boolean_result.mesh
-            else:
-                print(f"Boolean operation failed: {boolean_result.errorString}")
-                return terrain_mesh
-                
-        except Exception as e:
-            print(f"Failed to perform boolean subtraction: {e}")
-            return terrain_mesh
-
-    def _create_water_mesh_new_process(self, water_mask, bounds, water_level, water_depth, 
-                                     base_height=1.0, elevation_multiplier=1.0):
-        """
-        Create water mesh using the new 4-step process:
-        1. Use detect_water_areas (already done)
-        2. Create flat surface for water areas
-        3. Extrude this surface to have thickness
-        4. The extruded volume will be used for boolean subtraction
+            water_pixel_count = np.sum(water_mask)
+            print(f"Lowered {water_pixel_count} water pixels by {water_depth}m")
         
-        Args:
-            water_mask (numpy.ndarray): Boolean mask indicating water areas
-            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
-            water_level (float): Elevation level for water surface
-            water_depth (float): Thickness/depth of water volume
-            base_height (float): Height of the base
-            elevation_multiplier (float): Elevation scaling multiplier
-            
-        Returns:
-            tuple: (water_surface_mesh, water_volume_mesh)
-                - water_surface_mesh: The flat water surface
-                - water_volume_mesh: The extruded water volume for boolean ops
-        """
-        print("Creating water mesh using new 4-step process...")
-        
-        # Step 2: Create flat surface for water areas
-        print("Step 2: Creating flat water surface...")
-        water_surface = self._create_flat_water_surface(
-            water_mask, bounds, water_level, base_height, elevation_multiplier
-        )
-        
-        # Step 3: Extrude this surface to have thickness
-        print("Step 3: Extruding water surface to create volume...")
-        water_volume = self._extrude_water_surface(
-            water_surface, water_depth, elevation_multiplier
-        )
-        
-        print("Water mesh creation complete")
-        return water_surface, water_volume
+        return modified_elevation
 
     def _remove_small_components(self, mesh, min_component_size=100):
         """
@@ -383,43 +301,36 @@ class ModelGenerator:
         except Exception as e:
             print(f"Warning: Failed to remove small components: {e}")
             return mesh
-    
-    def create_water_features(self, mesh, elevation_data, bounds, 
+
+    def create_water_features(self, elevation_data, bounds, 
                             water_threshold=None, water_depth=2.0, 
                             base_height=1.0, elevation_multiplier=1.0,
                             min_water_area=100, output_prefix="terrain",
-                            connect_water_regions=False, max_connection_gap=2,
-                            remove_small_components=True, min_component_size=100):
+                            connect_water_regions=False, max_connection_gap=2):
         """
-        Extract water regions from the mesh using the new 4-step process:
-        1. Use detect_water_areas to find water areas
-        2. Create a flat surface for where the water should be
-        3. Extrude this water surface to have thickness
-        4. Subtract this mesh from the land mesh using boolean operations
+        Process elevation data to extract water features and modify terrain elevation.
+        This method detects water areas and returns modified elevation data and water information.
         
         Args:
-            mesh (meshlib.mrmeshpy.Mesh): The terrain mesh to process
-            elevation_data (numpy.ndarray): 2D array of elevation values used to create the mesh
+            elevation_data (numpy.ndarray): 2D array of elevation values
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
             water_threshold (float, optional): Elevation below which areas are considered water.
                                              If None, uses automatic detection (10th percentile)
             water_depth (float): How much to lower water areas below original elevation (meters)
             base_height (float): Height of the flat base
-            elevation_multiplier (float): Elevation scaling multiplier used in original mesh
+            elevation_multiplier (float): Elevation scaling multiplier
             min_water_area (int): Minimum number of connected pixels to be considered a water body
             output_prefix (str): Prefix for output filenames
             connect_water_regions (bool): Whether to connect nearby water regions
             max_connection_gap (int): Maximum gap to bridge between water regions
-            remove_small_components (bool): Whether to remove small disconnected components
-            min_component_size (int): Minimum number of faces for a component to be kept
             
         Returns:
-            tuple: (modified_terrain_mesh, water_surface_mesh, water_mask)
-                - modified_terrain_mesh: Terrain mesh with water volume subtracted
+            tuple: (modified_elevation_data, water_surface_mesh, water_mask)
+                - modified_elevation_data: Elevation data with lowered water areas
                 - water_surface_mesh: Separate mesh representing water surfaces
                 - water_mask: Boolean array indicating water locations
         """
-        print("Extracting water features using new 4-step process...")
+        print("Processing water features from elevation data...")
         
         # Step 1: Detect water areas from elevation data
         print("Step 1: Detecting water areas...")
@@ -427,70 +338,39 @@ class ModelGenerator:
         
         if not np.any(water_mask):
             print("No significant water areas detected.")
-            return mesh, None, water_mask
+            return elevation_data, None, water_mask
         
         # Step 1a: Optionally connect nearby water regions
         if connect_water_regions:
             water_mask = self._connect_water_regions(water_mask, max_connection_gap)
         
-        # Steps 2-3: Create flat surface and extrude to create water volume
+        # Step 2: Modify elevation data directly by lowering water areas
+        print("Step 2: Modifying elevation data for water areas...")
+        modified_elevation = self._modify_elevation_for_water(elevation_data, water_mask, water_depth)
+        
+        # Step 3: Create water surface mesh for water areas (at original water level)
+        print("Step 3: Creating water surface mesh...")
         water_level = np.mean(elevation_data[water_mask]) if np.any(water_mask) else 0
-        water_surface, water_volume = self._create_water_mesh_new_process(
-            water_mask, bounds, water_level, water_depth, 
-            base_height, elevation_multiplier
+        water_surface = self._create_flat_water_surface(
+            water_mask, bounds, water_level, base_height, elevation_multiplier
         )
-        # # Repair water mesh
-        # water_surface = mr.rebuildMesh(water_surface, mr.RebuildMeshSettings(
-        #     preSubdivide=True,
-        #     voxelSize=20,
-        #     signMode=mr.SignDetectionModeShort.Auto,
-        #     closeHolesInHoleWindingNumber=True,
-        #     offsetMode=mr.OffsetMode.Smooth,
-        #     outSharpEdges = mr.UndirectedEdgeBitSet(),
-        #     windingNumberThreshold=0.5,
-        #     windingNumberBeta=1,
-        #     fwn=mr.FastWindingNumber(water_surface),
-        #     decimate=False,
-        #     tinyEdgeLength=10,
-        #     progress=mr.func_bool_from_float(lambda _: True),
-        #     onSignDetectionModeSelected=mr.func_void_from_SignDetectionMode(lambda x: print(f"Sign detection mode selected: {x}")),
-        # ))
-        
-        # Step 4: Subtract water volume from terrain mesh
-        print("Step 4: Subtracting water volume from terrain...")
-        modified_terrain = self._subtract_water_from_terrain(mesh, water_volume)
-        
-        # Remove small disconnected components from terrain if requested
-        if remove_small_components:
-            modified_terrain = self._remove_small_components(modified_terrain, min_component_size)
-        
-        # Save results
-        terrain_file = f"{output_prefix}_with_water.obj"
-        try:
-            self.save_mesh(modified_terrain, terrain_file)
-        except Exception as e:
-            print(f"Failed to save terrain: {e}")
+
+        # Step 4: Thicken the water surface
+        print("Step 4: Thicken the water surface...")
+        water_volume = self._extrude_water_surface(water_surface, water_depth, elevation_multiplier)
         
         # Save water mesh if it exists and has vertices
-        if water_surface is not None and water_surface.points.size() > 1:
+        if water_volume is not None and water_volume.points.size() > 1:
             water_file = f"{output_prefix}_water.obj"
             try:
-                self.save_mesh(water_surface, water_file)
+                self.save_mesh(water_volume, water_file)
+                print(f"Saved water surface mesh: {water_file}")
             except Exception as e:
                 print(f"Failed to save water mesh: {e}")
         
-        # Optionally save water volume for debugging
-        if water_volume is not None and water_volume.points.size() > 1:
-            volume_file = f"{output_prefix}_water_volume.obj"
-            try:
-                self.save_mesh(water_volume, volume_file)
-                print(f"Saved water volume for debugging: {volume_file}")
-            except Exception as e:
-                print(f"Failed to save water volume: {e}")
+        print("Water feature processing complete!")
         
-        print("Water feature extraction complete using new process!")
-        
-        return modified_terrain, water_surface, water_mask
+        return modified_elevation, water_volume, water_mask
     
     def create_mesh_from_elevation(self, elevation_data, bounds, base_height=1.0, 
                                  elevation_multiplier=1.0):
@@ -712,8 +592,8 @@ class ModelGenerator:
         
         # Extract water features if requested
         if extract_water:
-            modified_terrain, water_mesh, water_mask = self.create_water_features(
-                mesh, elevation_data, bounds,
+            modified_elevation, water_mesh, water_mask = self.create_water_features(
+                elevation_data, bounds,
                 water_threshold=water_threshold,
                 water_depth=water_depth,
                 base_height=base_height,
@@ -721,13 +601,25 @@ class ModelGenerator:
                 min_water_area=min_water_area,
                 output_prefix=output_prefix,
                 connect_water_regions=connect_water_regions,
-                max_connection_gap=max_connection_gap,
-                remove_small_components=remove_small_components,
-                min_component_size=min_component_size
+                max_connection_gap=max_connection_gap
             )
             
             # Update result with water features
-            result['terrain_mesh'] = modified_terrain
+            terrain_with_water = self.create_mesh_from_elevation(modified_elevation, bounds, base_height, elevation_multiplier)
+            
+            # Remove small disconnected components from terrain if requested
+            if remove_small_components:
+                terrain_with_water = self._remove_small_components(terrain_with_water, min_component_size)
+            
+            # Save terrain with water features
+            terrain_file = f"{output_prefix}_with_water.obj"
+            try:
+                self.save_mesh(terrain_with_water, terrain_file)
+                print(f"Saved terrain with water features: {terrain_file}")
+            except Exception as e:
+                print(f"Failed to save terrain: {e}")
+            
+            result['terrain_mesh'] = terrain_with_water
             result['water_mesh'] = water_mesh
             result['water_mask'] = water_mask
         else:
