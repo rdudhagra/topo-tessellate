@@ -219,56 +219,8 @@ class ModelGenerator:
         if water_surface.points.size() <= 1:
             return water_surface
         
-        # Get vertices and faces from the surface mesh
-        surface_vertices = mn.getNumpyVerts(water_surface)
-        surface_faces = mn.getNumpyFaces(water_surface.topology)
-        
-        num_surface_verts = len(surface_vertices)
-        
-        # Create vertices for the extruded volume
-        vertices = []
-        faces = []
-        
-        # Add top surface vertices (original)
-        for vert in surface_vertices:
-            vertices.append([vert[0], vert[1], vert[2]])
-        
-        # Add bottom surface vertices (extruded down)
-        for vert in surface_vertices:
-            bottom_z = vert[2] - (water_depth * elevation_multiplier)
-            vertices.append([vert[0], vert[1], bottom_z])
-        
-        # Add top surface faces (original orientation)
-        for face in surface_faces:
-            faces.append([face[0], face[1], face[2]])
-        
-        # Add bottom surface faces (flipped orientation)
-        for face in surface_faces:
-            bottom_face = [
-                face[0] + num_surface_verts,
-                face[2] + num_surface_verts,  # Flipped
-                face[1] + num_surface_verts   # Flipped
-            ]
-            faces.append(bottom_face)
-        
-        # Create side walls by finding boundary edges
-        boundary_edges = self._find_boundary_edges(surface_faces, num_surface_verts)
-        
-        # Create side wall faces for each boundary edge
-        for edge in boundary_edges:
-            v1_top, v2_top = edge
-            v1_bottom = v1_top + num_surface_verts
-            v2_bottom = v2_top + num_surface_verts
-            
-            # Create two triangles for the side wall
-            faces.append([v1_top, v1_bottom, v2_top])
-            faces.append([v2_top, v1_bottom, v2_bottom])
-        
-        vertices = np.array(vertices, dtype=np.float32)
-        faces = np.array(faces, dtype=np.int32)
-        
-        # Create extruded water volume mesh
-        water_volume = mn.meshFromFacesVerts(faces, vertices)
+        water_volume = mr.copyMesh(water_surface)
+        mr.addBaseToPlanarMesh(water_volume, -water_depth * elevation_multiplier)
         
         return water_volume
 
