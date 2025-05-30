@@ -487,6 +487,22 @@ class ModelGenerator:
             water_mask, bounds, water_level, water_depth, 
             base_height, elevation_multiplier
         )
+        # # Repair water mesh
+        # water_surface = mr.rebuildMesh(water_surface, mr.RebuildMeshSettings(
+        #     preSubdivide=True,
+        #     voxelSize=20,
+        #     signMode=mr.SignDetectionModeShort.Auto,
+        #     closeHolesInHoleWindingNumber=True,
+        #     offsetMode=mr.OffsetMode.Smooth,
+        #     outSharpEdges = mr.UndirectedEdgeBitSet(),
+        #     windingNumberThreshold=0.5,
+        #     windingNumberBeta=1,
+        #     fwn=mr.FastWindingNumber(water_surface),
+        #     decimate=False,
+        #     tinyEdgeLength=10,
+        #     progress=mr.func_bool_from_float(lambda _: True),
+        #     onSignDetectionModeSelected=mr.func_void_from_SignDetectionMode(lambda x: print(f"Sign detection mode selected: {x}")),
+        # ))
         
         # Step 4: Subtract water volume from terrain mesh
         print("Step 4: Subtracting water volume from terrain...")
