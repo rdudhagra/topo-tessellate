@@ -131,9 +131,220 @@ class ModelGenerator:
         
         return final_water_mask
     
-    def _create_water_mesh(self, water_mask, bounds, water_level, water_depth, base_height=1.0, elevation_multiplier=1.0):
+    def _create_flat_water_surface(self, water_mask, bounds, water_level, base_height=1.0, elevation_multiplier=1.0):
         """
-        Create a thickened mesh for water areas with proper volume.
+        Create a flat surface mesh for water areas.
+        
+        Args:
+            water_mask (numpy.ndarray): Boolean mask indicating water areas
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
+            water_level (float): Elevation level for water surface
+            base_height (float): Height of the base
+            elevation_multiplier (float): Elevation scaling multiplier
+            
+        Returns:
+            meshlib.mrmeshpy.Mesh: Flat water surface mesh
+        """
+        height, width = water_mask.shape
+        
+        # Calculate real-world dimensions
+        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
+        scale_x = width_meters / width
+        scale_y = height_meters / height
+        
+        # Convert water level to model units
+        surface_z = water_level * elevation_multiplier + base_height
+        
+        vertices = []
+        faces = []
+        
+        # Create vertex index map for water pixels
+        vertex_indices = {}
+        vertex_count = 0
+        
+        # Step 1: Create vertices for all water pixels
+        for y in range(height):
+            for x in range(width):
+                if water_mask[y, x]:
+                    px = x * scale_x
+                    py = y * scale_y
+                    
+                    vertices.append([px, py, surface_z])
+                    vertex_indices[(y, x)] = vertex_count
+                    vertex_count += 1
+        
+        # Step 2: Create faces for water surface
+        for y in range(height - 1):
+            for x in range(width - 1):
+                # Check all 4 corners of this quad
+                corners = [(y, x), (y, x+1), (y+1, x), (y+1, x+1)]
+                water_corners = [water_mask[cy, cx] for cy, cx in corners]
+                
+                if all(water_corners):
+                    # All 4 corners are water - create 2 triangles
+                    v0 = vertex_indices[(y, x)]      # bottom-left
+                    v1 = vertex_indices[(y, x+1)]    # bottom-right
+                    v2 = vertex_indices[(y+1, x)]    # top-left
+                    v3 = vertex_indices[(y+1, x+1)]  # top-right
+                    
+                    # Counter-clockwise winding for upward normal
+                    faces.append([v0, v1, v2])
+                    faces.append([v1, v3, v2])
+        
+        if not vertices:
+            # Return empty mesh if no water found
+            vertices = np.array([[0, 0, 0]], dtype=np.float32)
+            faces = np.array([[0, 0, 0]], dtype=np.int32)
+        else:
+            vertices = np.array(vertices, dtype=np.float32)
+            faces = np.array(faces, dtype=np.int32)
+        
+        # Create mesh using meshlib
+        water_surface = mn.meshFromFacesVerts(faces, vertices)
+        
+        return water_surface
+
+    def _extrude_water_surface(self, water_surface, water_depth, elevation_multiplier=1.0):
+        """
+        Extrude the flat water surface to create a volume with thickness.
+        
+        Args:
+            water_surface (meshlib.mrmeshpy.Mesh): Flat water surface mesh
+            water_depth (float): Thickness/depth of water volume
+            elevation_multiplier (float): Elevation scaling multiplier
+            
+        Returns:
+            meshlib.mrmeshpy.Mesh: Extruded water volume mesh
+        """
+        if water_surface.points.size() <= 1:
+            return water_surface
+        
+        # Get vertices and faces from the surface mesh
+        surface_vertices = mn.getNumpyVerts(water_surface)
+        surface_faces = mn.getNumpyFaces(water_surface.topology)
+        
+        num_surface_verts = len(surface_vertices)
+        
+        # Create vertices for the extruded volume
+        vertices = []
+        faces = []
+        
+        # Add top surface vertices (original)
+        for vert in surface_vertices:
+            vertices.append([vert[0], vert[1], vert[2]])
+        
+        # Add bottom surface vertices (extruded down)
+        for vert in surface_vertices:
+            bottom_z = vert[2] - (water_depth * elevation_multiplier)
+            vertices.append([vert[0], vert[1], bottom_z])
+        
+        # Add top surface faces (original orientation)
+        for face in surface_faces:
+            faces.append([face[0], face[1], face[2]])
+        
+        # Add bottom surface faces (flipped orientation)
+        for face in surface_faces:
+            bottom_face = [
+                face[0] + num_surface_verts,
+                face[2] + num_surface_verts,  # Flipped
+                face[1] + num_surface_verts   # Flipped
+            ]
+            faces.append(bottom_face)
+        
+        # Create side walls by finding boundary edges
+        boundary_edges = self._find_boundary_edges(surface_faces, num_surface_verts)
+        
+        # Create side wall faces for each boundary edge
+        for edge in boundary_edges:
+            v1_top, v2_top = edge
+            v1_bottom = v1_top + num_surface_verts
+            v2_bottom = v2_top + num_surface_verts
+            
+            # Create two triangles for the side wall
+            faces.append([v1_top, v1_bottom, v2_top])
+            faces.append([v2_top, v1_bottom, v2_bottom])
+        
+        vertices = np.array(vertices, dtype=np.float32)
+        faces = np.array(faces, dtype=np.int32)
+        
+        # Create extruded water volume mesh
+        water_volume = mn.meshFromFacesVerts(faces, vertices)
+        
+        return water_volume
+
+    def _find_boundary_edges(self, faces, num_verts):
+        """
+        Find boundary edges of a mesh (edges that belong to only one face).
+        
+        Args:
+            faces (numpy.ndarray): Face indices
+            num_verts (int): Number of vertices
+            
+        Returns:
+            list: List of boundary edge tuples (v1, v2)
+        """
+        # Count occurrences of each edge
+        edge_count = {}
+        
+        for face in faces:
+            edges = [
+                (min(face[0], face[1]), max(face[0], face[1])),
+                (min(face[1], face[2]), max(face[1], face[2])),
+                (min(face[2], face[0]), max(face[2], face[0]))
+            ]
+            
+            for edge in edges:
+                edge_count[edge] = edge_count.get(edge, 0) + 1
+        
+        # Find edges that appear only once (boundary edges)
+        boundary_edges = []
+        for edge, count in edge_count.items():
+            if count == 1:
+                boundary_edges.append(edge)
+        
+        return boundary_edges
+
+    def _subtract_water_from_terrain(self, terrain_mesh, water_volume):
+        """
+        Subtract the water volume from the terrain mesh using boolean operations.
+        
+        Args:
+            terrain_mesh (meshlib.mrmeshpy.Mesh): The terrain mesh
+            water_volume (meshlib.mrmeshpy.Mesh): The water volume mesh
+            
+        Returns:
+            meshlib.mrmeshpy.Mesh: Modified terrain mesh with water subtracted
+        """
+        if water_volume.points.size() <= 1:
+            return terrain_mesh
+        
+        try:
+            # Perform boolean difference operation (terrain - water)
+            boolean_result = mr.boolean(
+                terrain_mesh, 
+                water_volume, 
+                mr.BooleanOperation.DifferenceAB
+            )
+            
+            if boolean_result.valid():
+                print("Successfully subtracted water volume from terrain")
+                return boolean_result.mesh
+            else:
+                print(f"Boolean operation failed: {boolean_result.errorString}")
+                return terrain_mesh
+                
+        except Exception as e:
+            print(f"Failed to perform boolean subtraction: {e}")
+            return terrain_mesh
+
+    def _create_water_mesh_new_process(self, water_mask, bounds, water_level, water_depth, 
+                                     base_height=1.0, elevation_multiplier=1.0):
+        """
+        Create water mesh using the new 4-step process:
+        1. Use detect_water_areas (already done)
+        2. Create flat surface for water areas
+        3. Extrude this surface to have thickness
+        4. The extruded volume will be used for boolean subtraction
         
         Args:
             water_mask (numpy.ndarray): Boolean mask indicating water areas
@@ -144,214 +355,26 @@ class ModelGenerator:
             elevation_multiplier (float): Elevation scaling multiplier
             
         Returns:
-            meshlib.mrmeshpy.Mesh: Thickened water mesh with volume
+            tuple: (water_surface_mesh, water_volume_mesh)
+                - water_surface_mesh: The flat water surface
+                - water_volume_mesh: The extruded water volume for boolean ops
         """
-        height, width = water_mask.shape
+        print("Creating water mesh using new 4-step process...")
         
-        # Calculate real-world dimensions
-        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
-        scale_x = width_meters / width
-        scale_y = height_meters / height
+        # Step 2: Create flat surface for water areas
+        print("Step 2: Creating flat water surface...")
+        water_surface = self._create_flat_water_surface(
+            water_mask, bounds, water_level, base_height, elevation_multiplier
+        )
         
-        # Convert water levels to model units
-        top_z = water_level * elevation_multiplier + base_height
-        bottom_z = (water_level - water_depth) * elevation_multiplier + base_height
+        # Step 3: Extrude this surface to have thickness
+        print("Step 3: Extruding water surface to create volume...")
+        water_volume = self._extrude_water_surface(
+            water_surface, water_depth, elevation_multiplier
+        )
         
-        vertices = []
-        faces = []
-        
-        # Create vertex index maps for top and bottom surfaces
-        top_vertex_indices = {}
-        bottom_vertex_indices = {}
-        
-        # Step 1: Create vertices for all water pixels
-        vertex_count = 0
-        for y in range(height):
-            for x in range(width):
-                if water_mask[y, x]:
-                    px = x * scale_x
-                    py = y * scale_y
-                    
-                    # Top surface vertex
-                    vertices.append([px, py, top_z])
-                    top_vertex_indices[(y, x)] = vertex_count
-                    vertex_count += 1
-                    
-                    # Bottom surface vertex  
-                    vertices.append([px, py, bottom_z])
-                    bottom_vertex_indices[(y, x)] = vertex_count
-                    vertex_count += 1
-        
-        # Step 2: Create top surface faces
-        for y in range(height - 1):
-            for x in range(width - 1):
-                # Check all 4 corners of this quad
-                corners = [(y, x), (y, x+1), (y+1, x), (y+1, x+1)]
-                water_corners = [water_mask[cy, cx] for cy, cx in corners]
-                
-                if all(water_corners):
-                    # All 4 corners are water - create 2 triangles
-                    v0 = top_vertex_indices[(y, x)]      # bottom-left
-                    v1 = top_vertex_indices[(y, x+1)]    # bottom-right
-                    v2 = top_vertex_indices[(y+1, x)]    # top-left
-                    v3 = top_vertex_indices[(y+1, x+1)]  # top-right
-                    
-                    # Counter-clockwise winding for upward normal
-                    faces.append([v0, v1, v2])
-                    faces.append([v1, v3, v2])
-        
-        # Step 3: Create bottom surface faces (flipped normals)
-        for y in range(height - 1):
-            for x in range(width - 1):
-                corners = [(y, x), (y, x+1), (y+1, x), (y+1, x+1)]
-                water_corners = [water_mask[cy, cx] for cy, cx in corners]
-                
-                if all(water_corners):
-                    v0 = bottom_vertex_indices[(y, x)]      # bottom-left
-                    v1 = bottom_vertex_indices[(y, x+1)]    # bottom-right
-                    v2 = bottom_vertex_indices[(y+1, x)]    # top-left
-                    v3 = bottom_vertex_indices[(y+1, x+1)]  # top-right
-                    
-                    # Clockwise winding for downward normal (when viewed from above)
-                    faces.append([v0, v2, v1])
-                    faces.append([v1, v2, v3])
-        
-        # Step 4: Create side walls using a more robust approach
-        # Create side walls for every boundary edge of water regions
-        for y in range(height):
-            for x in range(width):
-                if water_mask[y, x]:
-                    
-                    # For each water pixel, check each of its 4 edges
-                    # and create a side wall if that edge is a boundary
-                    
-                    # North edge: check if there's a boundary to the north
-                    if y == 0 or not water_mask[y-1, x]:
-                        # This is a north boundary edge - create wall segment
-                        # Get vertices for this pixel's north edge
-                        top_left = top_vertex_indices[(y, x)]
-                        bottom_left = bottom_vertex_indices[(y, x)]
-                        
-                        # Check if there's a water pixel to the right
-                        if x < width - 1:
-                            if water_mask[y, x+1]:
-                                # Connect to the next water pixel's north edge
-                                top_right = top_vertex_indices[(y, x+1)]
-                                bottom_right = bottom_vertex_indices[(y, x+1)]
-                                
-                                # Create wall quad (outward normal pointing north)
-                                faces.append([top_left, bottom_left, top_right])
-                                faces.append([bottom_left, bottom_right, top_right])
-                    
-                    # South edge: check if there's a boundary to the south  
-                    if y == height - 1 or not water_mask[y+1, x]:
-                        # This is a south boundary edge - create wall segment
-                        top_left = top_vertex_indices[(y, x)]
-                        bottom_left = bottom_vertex_indices[(y, x)]
-                        
-                        if x < width - 1:
-                            if water_mask[y, x+1]:
-                                # Connect to the next water pixel's south edge
-                                top_right = top_vertex_indices[(y, x+1)]
-                                bottom_right = bottom_vertex_indices[(y, x+1)]
-                                
-                                # Create wall quad (outward normal pointing south)
-                                faces.append([top_left, top_right, bottom_left])
-                                faces.append([bottom_left, top_right, bottom_right])
-                    
-                    # West edge: check if there's a boundary to the west
-                    if x == 0 or not water_mask[y, x-1]:
-                        # This is a west boundary edge - create wall segment
-                        top_left = top_vertex_indices[(y, x)]
-                        bottom_left = bottom_vertex_indices[(y, x)]
-                        
-                        if y < height - 1:
-                            if water_mask[y+1, x]:
-                                # Connect to the next water pixel's west edge
-                                top_right = top_vertex_indices[(y+1, x)]
-                                bottom_right = bottom_vertex_indices[(y+1, x)]
-                                
-                                # Create wall quad (outward normal pointing west)
-                                faces.append([top_left, top_right, bottom_left])
-                                faces.append([top_right, bottom_right, bottom_left])
-                    
-                    # East edge: check if there's a boundary to the east
-                    if x == width - 1 or not water_mask[y, x+1]:
-                        # This is an east boundary edge - create wall segment
-                        top_left = top_vertex_indices[(y, x)]
-                        bottom_left = bottom_vertex_indices[(y, x)]
-                        
-                        if y < height - 1:
-                            if water_mask[y+1, x]:
-                                # Connect to the next water pixel's east edge
-                                top_right = top_vertex_indices[(y+1, x)]
-                                bottom_right = bottom_vertex_indices[(y+1, x)]
-                                
-                                # Create wall quad (outward normal pointing east)
-                                faces.append([top_left, bottom_left, top_right])
-                                faces.append([bottom_left, bottom_right, top_right])
-        
-        if not vertices:
-            # Return empty mesh
-            vertices = np.array([[0, 0, 0]], dtype=np.float32)
-            faces = np.array([[0, 0, 0]], dtype=np.int32)
-        else:
-            vertices = np.array(vertices, dtype=np.float32)
-            faces = np.array(faces, dtype=np.int32)
-        
-        # Create mesh using meshlib
-        water_mesh = mn.meshFromFacesVerts(faces, vertices)
-        
-        return water_mesh
-    
-    def _lower_terrain_at_water(self, mesh, elevation_data, water_mask, bounds, 
-                               water_depth=2.0, base_height=1.0, elevation_multiplier=1.0):
-        """
-        Lower the terrain mesh at water locations using meshlib functions.
-        
-        Args:
-            mesh (meshlib.mrmeshpy.Mesh): The terrain mesh to modify
-            elevation_data (numpy.ndarray): Original elevation data
-            water_mask (numpy.ndarray): Boolean mask indicating water areas
-            bounds (tuple): Geographic bounds
-            water_depth (float): How much to lower water areas (in meters)
-            base_height (float): Base height of the mesh
-            elevation_multiplier (float): Elevation scaling multiplier
-            
-        Returns:
-            meshlib.mrmeshpy.Mesh: Modified mesh with lowered water areas
-        """
-        height, width = water_mask.shape
-        
-        # Calculate scaling factors
-        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
-        scale_x = width_meters / width
-        scale_y = height_meters / height
-        
-        # Get mesh points as numpy array
-        points = mn.getNumpyVerts(mesh)
-        
-        # Modify vertices that fall within water areas
-        modified_count = 0
-        for i, point in enumerate(points):
-            # Convert mesh coordinates back to grid coordinates
-            grid_x = int(point[0] / scale_x)
-            grid_y = int(point[1] / scale_y)
-            
-            # Check bounds
-            if 0 <= grid_x < width and 0 <= grid_y < height:
-                if water_mask[grid_y, grid_x]:
-                    # Lower this vertex
-                    current_elevation = (point[2] - base_height) / elevation_multiplier
-                    new_elevation = current_elevation - water_depth
-                    points[i][2] = new_elevation * elevation_multiplier + base_height
-                    modified_count += 1
-        
-        # Create new mesh with modified vertices
-        faces = mn.getNumpyFaces(mesh.topology)
-        modified_mesh = mn.meshFromFacesVerts(faces, points)
-        
-        return modified_mesh
+        print("Water mesh creation complete")
+        return water_surface, water_volume
 
     def _remove_small_components(self, mesh, min_component_size=100):
         """
@@ -416,10 +439,11 @@ class ModelGenerator:
                             connect_water_regions=False, max_connection_gap=2,
                             remove_small_components=True, min_component_size=100):
         """
-        Extract water regions from the mesh and create separate water objects.
-        
-        This function identifies water areas from elevation data, lowers those areas 
-        in the terrain mesh, and creates a separate water mesh to fill the cavities.
+        Extract water regions from the mesh using the new 4-step process:
+        1. Use detect_water_areas to find water areas
+        2. Create a flat surface for where the water should be
+        3. Extrude this water surface to have thickness
+        4. Subtract this mesh from the land mesh using boolean operations
         
         Args:
             mesh (meshlib.mrmeshpy.Mesh): The terrain mesh to process
@@ -438,14 +462,15 @@ class ModelGenerator:
             min_component_size (int): Minimum number of faces for a component to be kept
             
         Returns:
-            tuple: (modified_terrain_mesh, water_mesh, water_mask)
-                - modified_terrain_mesh: Terrain mesh with lowered water areas
-                - water_mesh: Separate mesh representing water surfaces
+            tuple: (modified_terrain_mesh, water_surface_mesh, water_mask)
+                - modified_terrain_mesh: Terrain mesh with water volume subtracted
+                - water_surface_mesh: Separate mesh representing water surfaces
                 - water_mask: Boolean array indicating water locations
         """
-        print("Extracting water features...")
+        print("Extracting water features using new 4-step process...")
         
         # Step 1: Detect water areas from elevation data
+        print("Step 1: Detecting water areas...")
         water_mask = self._detect_water_areas(elevation_data, water_threshold, min_water_area)
         
         if not np.any(water_mask):
@@ -456,24 +481,22 @@ class ModelGenerator:
         if connect_water_regions:
             water_mask = self._connect_water_regions(water_mask, max_connection_gap)
         
-        # Step 2: Lower terrain at water locations
-        modified_terrain = self._lower_terrain_at_water(
-            mesh, elevation_data, water_mask, bounds, 
-            water_depth, base_height, elevation_multiplier
-        )
-        
-        # Step 3: Remove small disconnected components from terrain
-        if remove_small_components:
-            modified_terrain = self._remove_small_components(modified_terrain, min_component_size)
-        
-        # Step 4: Create water surface mesh
+        # Steps 2-3: Create flat surface and extrude to create water volume
         water_level = np.mean(elevation_data[water_mask]) if np.any(water_mask) else 0
-        water_mesh = self._create_water_mesh(
+        water_surface, water_volume = self._create_water_mesh_new_process(
             water_mask, bounds, water_level, water_depth, 
             base_height, elevation_multiplier
         )
-
-        # Step 5: Save results
+        
+        # Step 4: Subtract water volume from terrain mesh
+        print("Step 4: Subtracting water volume from terrain...")
+        modified_terrain = self._subtract_water_from_terrain(mesh, water_volume)
+        
+        # Remove small disconnected components from terrain if requested
+        if remove_small_components:
+            modified_terrain = self._remove_small_components(modified_terrain, min_component_size)
+        
+        # Save results
         terrain_file = f"{output_prefix}_with_water.obj"
         try:
             self.save_mesh(modified_terrain, terrain_file)
@@ -481,16 +504,25 @@ class ModelGenerator:
             print(f"Failed to save terrain: {e}")
         
         # Save water mesh if it exists and has vertices
-        if water_mesh is not None and water_mesh.points.size() > 1:
+        if water_surface is not None and water_surface.points.size() > 1:
             water_file = f"{output_prefix}_water.obj"
             try:
-                self.save_mesh(water_mesh, water_file)
+                self.save_mesh(water_surface, water_file)
             except Exception as e:
                 print(f"Failed to save water mesh: {e}")
         
-        print("Water feature extraction complete")
+        # Optionally save water volume for debugging
+        if water_volume is not None and water_volume.points.size() > 1:
+            volume_file = f"{output_prefix}_water_volume.obj"
+            try:
+                self.save_mesh(water_volume, volume_file)
+                print(f"Saved water volume for debugging: {volume_file}")
+            except Exception as e:
+                print(f"Failed to save water volume: {e}")
         
-        return modified_terrain, water_mesh, water_mask
+        print("Water feature extraction complete using new process!")
+        
+        return modified_terrain, water_surface, water_mask
     
     def create_mesh_from_elevation(self, elevation_data, bounds, base_height=1.0, 
                                  elevation_multiplier=1.0):
