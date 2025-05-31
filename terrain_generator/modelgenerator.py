@@ -22,19 +22,19 @@ class ModelGenerator:
     """
     A class for generating 3D models from elevation data using meshlib.
 
-    This class integrates with the ElevationMap to create realistic 3D meshes
+    This class integrates with the Elevation to create realistic 3D meshes
     from SRTM elevation data with proper surface normals and base structures.
     """
 
-    def __init__(self, elevation_map=None):
+    def __init__(self, elevation=None):
         """
         Initialize the ModelGenerator.
 
         Args:
-            elevation_map (ElevationMap, optional): ElevationMap instance.
+            elevation (Elevation, optional): Elevation instance.
                                                    If None, creates a new one.
         """
-        self.elevation_map = elevation_map or ElevationMap()
+        self.elevation = elevation or SRTM()
 
     def _calculate_bounds_dimensions_meters(self, bounds):
         """
@@ -535,7 +535,7 @@ class ModelGenerator:
 
         # Get elevation data from SRTM
         print("Loading elevation data...")
-        elevation_data = self.elevation_map.get_elevation_data(bounds, topo_dir)
+        elevation_data = self.elevation.get_elevation(bounds, topo_dir)
 
         print(
             f"Elevation data: {elevation_data.shape}, range: {elevation_data.min():.1f} to {elevation_data.max():.1f} m"

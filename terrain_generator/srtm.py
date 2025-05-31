@@ -6,7 +6,7 @@ import concurrent.futures
 import multiprocessing
 import time
 import numpy as np
-from elevation import Elevation
+from .elevation import Elevation
 
 
 class SRTM(Elevation):
@@ -115,7 +115,7 @@ class SRTM(Elevation):
         except Exception as e:
             raise ValueError(f"Error reading HGT file: {str(e)}")
 
-    def get_elevation_data(
+    def get_elevation(
         self,
         bounds,
         topo_dir="topo",
@@ -150,7 +150,7 @@ class SRTM(Elevation):
         elevation_data = self._stitch_srtm_tiles(tile_files)
 
         # Crop the stitched tiles to the bounds using simple geographic coordinates
-        elevation_data = self._crop_elevation_data(elevation_data, bounds, tile_files)
+        elevation_data = self._crop_elevation_data(elevation_data, bounds)
 
         return elevation_data
 
