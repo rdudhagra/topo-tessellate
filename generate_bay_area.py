@@ -131,37 +131,32 @@ Total Area: {sum(b.area for b in buildings)/1_000_000:.1f} km²"""
     print(f"  High-rise (>100m): {tall_buildings} ({tall_buildings/len(buildings)*100:.1f}%)")
 
 
-def generate_terrain():
+def generate_terrain(prefix, bounds):
     """Generate a detailed Bay Area terrain model."""
     print("=== Bay Area Terrain Model Generation ===")
 
     # Create model generator
     generator = ModelGenerator()
 
-    # Bay Area bounds (covers San Francisco to San Jose area)
-    bounds = (-122.67, 37.22, -121.75, 38.18)
-
     try:
         # Generate detailed terrain model
-        mesh = generator.generate_terrain_model(
+        terrain_mesh, water_mesh = generator.generate_terrain_model(
             bounds=bounds,
             topo_dir="topo",
             base_height=2500,
-            extract_water=True,
             water_threshold=5,
             water_depth=50,
             elevation_multiplier=5,
-            downsample_factor=1,
-            output_prefix="bay_area_terrain",
+            downsample_factor=5,
+            output_prefix=prefix,
         )
 
-        print("Bay Area terrain model created successfully!")
-        return mesh
+        # Save the terrain and water meshes
+        generator.save_mesh(terrain_mesh, f"{prefix}_terrain.obj")
+        generator.save_mesh(water_mesh, f"{prefix}_water.obj")
 
     except Exception as e:
         print(f"Could not generate Bay Area terrain model: {e}")
-        print("This requires SRTM data files in the 'topo/' directory")
-        print(f"You can download SRTM data from: https://dwtkns.com/srtm30m/")
         return None
 
 
@@ -171,13 +166,11 @@ def generate_bay_area():
     bounds = (-122.67, 37.22, -121.75, 38.18)
     
     # Generate terrain
-    terrain_mesh = generate_terrain()
+    generate_terrain("bay_area", bounds)
     
     # Extract buildings and create visualization
     # buildings = extract_buildings(bounds)
     
-    return terrain_mesh
-
 
 if __name__ == "__main__":
     generate_bay_area()
