@@ -11,6 +11,9 @@ import meshlib.mrmeshpy as mr
 import meshlib.mrmeshnumpy as mn
 from geopy.distance import geodesic
 
+# Import the new console output system
+from .console import output
+
 # Handle both direct execution and module import
 try:
     from .srtm import SRTM
@@ -28,7 +31,7 @@ class ModelGenerator:
 
     def __init__(self, elevation=None):
         """
-        Initialize the ModelGenerator.
+        Initialize the ModelGenerator with an elevation source.
 
         Args:
             elevation (Elevation, optional): Elevation instance.
@@ -77,7 +80,7 @@ class ModelGenerator:
         # Use slicing to downsample - take every nth point
         downsampled = elevation_data[::downsample_factor, ::downsample_factor]
 
-        print(
+        output.progress_info(
             f"Downsampled elevation data from {elevation_data.shape} to {downsampled.shape}"
         )
 
@@ -131,7 +134,7 @@ class ModelGenerator:
         total_pixels = elevation_data.size
         water_percentage = (water_pixel_count / total_pixels) * 100
 
-        print(
+        output.progress_info(
             f"Detected {water_pixel_count} water pixels ({water_percentage:.1f}% of area)"
         )
 
@@ -255,7 +258,7 @@ class ModelGenerator:
             )
 
             water_pixel_count = np.sum(water_mask)
-            print(f"Lowered {water_pixel_count} water pixels by {water_depth}m")
+            output.progress_info(f"Lowered {water_pixel_count} water pixels by {water_depth}m")
 
         return modified_elevation
 
@@ -268,6 +271,9 @@ class ModelGenerator:
         base_height=1.0,
         elevation_multiplier=1.0,
         min_water_area=100,
+        output_prefix="water_features",
+        connect_water_regions=False,
+        max_connection_gap=5,
     ):
         """
         Process elevation data to extract water features and modify terrain elevation.
@@ -292,38 +298,38 @@ class ModelGenerator:
                 - water_surface_mesh: Separate mesh representing water surfaces
                 - water_mask: Boolean array indicating water locations
         """
-        print("Processing water features from elevation data...")
+        output.subheader("Processing water features from elevation data")
 
         # Step 1: Detect water areas from elevation data
-        print("Step 1: Detecting water areas...")
+        output.progress_info("Step 1: Detecting water areas...")
         water_mask = self._detect_water_areas(
             elevation_data, water_threshold, min_water_area
         )
 
         if not np.any(water_mask):
-            print("No significant water areas detected.")
+            output.info("No significant water areas detected.")
             return elevation_data, None, water_mask
 
         # Step 2: Modify elevation data directly by lowering water areas
-        print("Step 2: Modifying elevation data for water areas...")
+        output.progress_info("Step 2: Modifying elevation data for water areas...")
         modified_elevation = self._modify_elevation_for_water(
             elevation_data, water_mask, water_depth
         )
 
         # Step 3: Create water surface mesh for water areas (at original water level)
-        print("Step 3: Creating water surface mesh...")
+        output.progress_info("Step 3: Creating water surface mesh...")
         water_level = np.mean(elevation_data[water_mask]) if np.any(water_mask) else 0
         water_surface = self._create_flat_water_surface(
             water_mask, bounds, water_level, base_height, elevation_multiplier
         )
 
         # Step 4: Thicken the water surface
-        print("Step 4: Thicken the water surface...")
+        output.progress_info("Step 4: Thicken the water surface...")
         water_volume = self._extrude_water_surface(
             water_surface, water_depth, elevation_multiplier
         )
 
-        print("Water feature processing complete!")
+        output.success("Water feature processing complete!")
 
         return modified_elevation, water_volume, water_mask
 
@@ -356,9 +362,9 @@ class ModelGenerator:
         # The elevation_multiplier allows scaling from this realistic baseline
         elevation_scale = elevation_multiplier  # Direct multiplier of realistic scale
 
-        print(f"Creating mesh from {width}x{height} elevation grid")
-        print(f"Real-world size: {width_meters/1000:.2f} x {height_meters/1000:.2f} km")
-        print(
+        output.progress_info(f"Creating mesh from {width}x{height} elevation grid")
+        output.info(f"Real-world size: {width_meters/1000:.2f} x {height_meters/1000:.2f} km")
+        output.info(
             f"Elevation range: {elevation_data.min():.1f} to {elevation_data.max():.1f} meters"
         )
 
@@ -467,7 +473,7 @@ class ModelGenerator:
             faces.append([top_left, bottom_left, top_right])
             faces.append([top_right, bottom_left, bottom_right])
 
-        print(f"Generated mesh with {len(vertices)} vertices and {len(faces)} faces")
+        output.success(f"Generated mesh with {len(vertices)} vertices and {len(faces)} faces")
 
         # Convert to numpy arrays
         vertices_array = np.array(vertices, dtype=np.float32)
@@ -488,9 +494,9 @@ class ModelGenerator:
         """
         try:
             mr.saveMesh(mesh, filename)
-            print(f"Saved: {filename}")
+            output.file_saved(filename, "mesh")
         except Exception as e:
-            print(f"Failed to save {filename}: {e}")
+            output.error(f"Failed to save {filename}: {e}")
 
     def generate_terrain_model(
         self,
@@ -503,6 +509,10 @@ class ModelGenerator:
         water_threshold=None,
         water_depth=2.0,
         min_water_area=100,
+        connect_water_regions=False,
+        max_connection_gap=5,
+        remove_small_components=False,
+        min_component_size=100,
     ):
         """
         Generate a 3D terrain model from SRTM elevation data.
@@ -529,15 +539,14 @@ class ModelGenerator:
                 - 'water_mask': Boolean array indicating water locations (if extract_water=True)
                 - 'elevation_data': The elevation data used
         """
-        print("=== Terrain Model Generation ===")
-        print(f"Bounds: {bounds}")
-        print(f"Water extraction: {water_threshold}")
+        output.header("Terrain Model Generation", f"Bounds: {bounds}")
+        output.info(f"Water extraction: {water_threshold}")
 
         # Get elevation data from SRTM
-        print("Loading elevation data...")
+        output.subheader("Loading elevation data")
         elevation_data = self.elevation.get_elevation(bounds, topo_dir)
 
-        print(
+        output.info(
             f"Elevation data: {elevation_data.shape}, range: {elevation_data.min():.1f} to {elevation_data.max():.1f} m"
         )
 
@@ -548,7 +557,7 @@ class ModelGenerator:
             )
 
         # Extract water features
-        print("Extracting water features...")
+        output.subheader("Extracting water features")
         modified_elevation, water_mesh, water_mask = self.create_water_features(
             elevation_data,
             bounds,
@@ -557,14 +566,17 @@ class ModelGenerator:
             base_height=base_height,
             elevation_multiplier=elevation_multiplier,
             min_water_area=min_water_area,
+            output_prefix=output_prefix,
+            connect_water_regions=connect_water_regions,
+            max_connection_gap=max_connection_gap,
         )
 
         # Update result with water features
-        print("Creating terrain mesh...")
+        output.subheader("Creating terrain mesh")
         terrain = self.create_mesh_from_elevation(
             modified_elevation, bounds, base_height, elevation_multiplier
         )
 
-        print("Terrain model generation complete!")
+        output.success("Terrain model generation complete!")
 
         return terrain, water_mesh

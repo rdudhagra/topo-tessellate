@@ -23,6 +23,16 @@ The application uses SRTM (Shuttle Radar Topography Mission) data to generate ac
 - Water body representation
 - Parametric terrain modeling with CadQuery
 
+### Beautiful Console Output 🎨
+- **Colorful Interface**: Rich terminal output with colors, icons, and formatting
+- **Structured Tables**: Statistics and data displayed in beautiful tables
+- **Progress Tracking**: Visual progress bars for long operations
+- **Consistent Styling**: Uniform output across all modules and scripts
+- **Error Handling**: Clear error messages with helpful suggestions
+- **Cache Visualization**: Visual feedback for cache hits and misses
+
+Run `python demo_console.py` to see all the console output features in action!
+
 ### 3D-Ready Building Data Extraction (`buildings.py`)
 - **3D-Focused**: Only extracts buildings with BOTH polygon coordinates AND height data
 - **Quality Filtering**: Focuses on major buildings/structures (filters out small items like lamps, trees, etc.)
@@ -57,7 +67,28 @@ conda env create -f environment.yml
 conda activate world-to-model
 ```
 
+Or install with pip:
+
+```bash
+pip install -r requirements.txt
+```
+
 3. Download SRTM data for your region of interest. Place the SRTM data files (.hgt.zip) in a directory named `topo` in the project root.
+
+## Quick Demo
+
+Want to see the beautiful new console output in action? Run the demo:
+
+```bash
+python demo_console.py
+```
+
+This will showcase all the colorful output features including:
+- Progress bars and status messages
+- Formatted tables and statistics
+- Error handling and warnings
+- File operations and cache management
+- A complete realistic workflow simulation
 
 ## Usage
 
@@ -69,12 +100,18 @@ Run the script with your desired region's coordinates:
 python main.py --min-lon -122.673340 --min-lat 37.225955 --max-lon -121.753235 --max-lat 38.184228 --output-prefix bay_area
 ```
 
+The new console output will show you:
+- ✓ Colorful progress indicators
+- 📊 Formatted statistics tables  
+- ⚠️ Clear warnings and errors
+- 💾 Cache status and file operations
+
 ### 3D-Ready Building Data Extraction
 
 Use the `buildings.py` module to extract 3D-ready building data:
 
 ```python
-from buildings import BuildingsExtractor
+from terrain_generator.buildings import BuildingsExtractor
 
 # Create extractor with caching enabled
 extractor = BuildingsExtractor(use_cache=True, cache_max_age_days=30)
@@ -83,7 +120,7 @@ extractor = BuildingsExtractor(use_cache=True, cache_max_age_days=30)
 bounds = (-122.42, 37.77, -122.38, 37.80)  # Downtown San Francisco
 buildings = extractor.extract_buildings(bounds)
 
-# Print statistics
+# Print beautiful formatted statistics
 extractor.print_stats()
 
 # Access individual building data (all buildings guaranteed to have polygon + height)
@@ -94,32 +131,37 @@ for building in buildings[:5]:
     print(f"  Coordinates: {len(building.coordinates)} points")  # Always available
 ```
 
-#### Cache Management
+The extraction process now includes:
+- �� Real-time progress tracking
+- 📈 Detailed statistics in formatted tables
+- 💾 Visual cache status updates
+- ✨ Color-coded success/warning/error messages
 
-The buildings extractor includes efficient caching:
+### Console Output Features
 
-```python
-# Cache is automatically used by default
-extractor = BuildingsExtractor(use_cache=True)
+The new console system provides:
 
-# Force refresh (ignore cache)
-buildings = extractor.extract_buildings(bounds, force_refresh=True)
+#### Message Types
+- **Info** (ℹ): General information and status updates
+- **Success** (✓): Successful operations and completions
+- **Warning** (⚠): Non-critical issues and alerts
+- **Error** (✗): Critical errors and failures
+- **Progress** (⟳): Ongoing operations and progress
 
-# Clear cache for specific bounds
-extractor.clear_cache(bounds)
+#### Structured Display
+- **Headers**: Large, prominent section titles with borders
+- **Tables**: Formatted statistics and data in aligned columns
+- **Progress Bars**: Visual feedback for long-running operations
+- **File Operations**: Clear indication of saved files and formats
 
-# Clear all cache
-extractor.clear_cache()
-```
+#### Color Scheme
+- 🔵 **Primary**: Cyan for headers and main elements
+- 🟢 **Success**: Green for completed operations
+- 🟡 **Warning**: Yellow for cautions and alerts
+- 🔴 **Error**: Red for failures and critical issues
+- 🟣 **Accent**: Magenta for progress and special operations
 
-**3D-Ready Cache Performance:**
-- **Quality**: Only buildings with both polygon geometry AND height data
-- **Efficiency**: 5,556 3D-ready buildings vs 7,771 total buildings (71% have height data)
-- **File Size**: ~930KB for 5,556 3D-ready buildings (smaller, higher quality dataset)
-- **Loading Speed**: Lightning-fast cache loading for repeated queries
-- **Storage**: Compressed pickle files with gzip, named with `3d_` prefix
-
-### Command-line Arguments
+## Command-line Arguments
 
 | Argument | Description | Default |
 |----------|-------------|---------|
@@ -147,7 +189,7 @@ python main.py --min-lon -122.673340 --min-lat 37.225955 --max-lon -121.753235 -
 Extract 3D-ready buildings for downtown Oakland:
 
 ```python
-from buildings import BuildingsExtractor
+from terrain_generator.buildings import BuildingsExtractor
 
 # Downtown Oakland bounds
 bounds = (-122.28, 37.79, -122.25, 37.82)

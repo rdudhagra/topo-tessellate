@@ -4,6 +4,9 @@ import rasterio
 from rasterio.windows import from_bounds
 from .elevation import Elevation
 
+# Import the new console output system
+from .console import output
+
 
 class GeoTiff(Elevation):
     def __init__(self, file_name):
@@ -21,7 +24,7 @@ class GeoTiff(Elevation):
         Returns:
             numpy.ndarray: The extracted elevation data
         """
-        print(f"Extracting elevation data from GeoTIFF for bounds: {bounds}")
+        output.progress_info(f"Extracting elevation data from GeoTIFF for bounds: {bounds}")
         
         min_lon, min_lat, max_lon, max_lat = bounds
 
@@ -29,11 +32,11 @@ class GeoTiff(Elevation):
         
         try:
             with rasterio.open(file_path) as src:
-                print(f"  GeoTIFF file: {file_path}")
-                print(f"  File bounds: {src.bounds}")
-                print(f"  File CRS: {src.crs}")
-                print(f"  File shape: {src.shape}")
-                print(f"  File transform: {src.transform}")
+                output.info(f"  GeoTIFF file: {file_path}")
+                output.info(f"  File bounds: {src.bounds}")
+                output.info(f"  File CRS: {src.crs}")
+                output.info(f"  File shape: {src.shape}")
+                output.info(f"  File transform: {src.transform}")
                 
                 # Check if the requested bounds overlap with the file bounds
                 file_bounds = src.bounds
@@ -50,12 +53,12 @@ class GeoTiff(Elevation):
                 )
                 
                 if clamped_bounds != bounds:
-                    print(f"  Bounds clamped to file extent: {clamped_bounds}")
+                    output.warning(f"  Bounds clamped to file extent: {clamped_bounds}")
                 
                 # Get the window that corresponds to the bounds
                 window = from_bounds(*clamped_bounds, src.transform)
                 
-                print(f"  Reading window: {window}")
+                output.info(f"  Reading window: {window}")
                 
                 # Read the elevation data for the window
                 elevation_data = src.read(1, window=window)
@@ -69,8 +72,8 @@ class GeoTiff(Elevation):
                 # Vertically flip the elevation data
                 elevation_data = np.flipud(elevation_data)
                 
-                print(f"  Extracted elevation data shape: {elevation_data.shape}")
-                print(f"  Elevation range: {elevation_data.min():.1f}m to {elevation_data.max():.1f}m")
+                output.success(f"  Extracted elevation data shape: {elevation_data.shape}")
+                output.info(f"  Elevation range: {elevation_data.min():.1f}m to {elevation_data.max():.1f}m")
                 
                 return elevation_data
                 

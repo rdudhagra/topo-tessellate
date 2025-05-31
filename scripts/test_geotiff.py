@@ -1,159 +1,163 @@
 #!/usr/bin/env python3
 """
-Test script for terrain_generator/geotiff.py
+GeoTIFF Testing Script
 
-This script tests the GeoTiff class with San Francisco Bay Area coordinates.
-Usage: python test_geotiff.py --min-lon -122.67 --min-lat 37.22 --max-lon -121.75 --max-lat 38.18 --geotiff-file output_USGS10m.tif
+This script tests the GeoTIFF elevation data loading and processing functionality.
 """
 
 import argparse
 import sys
 import os
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LightSource
-import time
 
-# Add the base directory to the Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+# Add the parent directory to the Python path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from terrain_generator.geotiff import GeoTiff
+    from terrain_generator.console import output
 except ImportError as e:
-    print(f"Error importing GeoTiff: {e}")
-    print("Make sure the terrain_generator directory exists and contains geotiff.py")
+    output.error(f"Error importing GeoTiff: {e}")
+    output.error("Make sure the terrain_generator directory exists and contains geotiff.py")
     sys.exit(1)
 
 
 def test_geotiff(bounds, geotiff_file, topo_dir="topo", save_plots=True):
     """
-    Test the GeoTiff with given bounds.
+    Test the GeoTiff class with given bounds and visualize the results.
 
     Args:
         bounds (tuple): (min_lon, min_lat, max_lon, max_lat)
-        geotiff_file (str): Name of the GeoTIFF file
+        geotiff_file (str): Name of the GeoTIFF file to test
         topo_dir (str): Directory containing GeoTIFF data
         save_plots (bool): Whether to save visualization plots
     """
     min_lon, min_lat, max_lon, max_lat = bounds
 
-    print("=" * 60)
-    print("GEOTIFF ELEVATION MAP TEST")
-    print("=" * 60)
-    print(f"Testing bounds: {bounds}")
-    print(
-        f"Region: Longitude {min_lon}° to {max_lon}°, Latitude {min_lat}° to {max_lat}°"
-    )
-    print(f"GeoTIFF file: {geotiff_file}")
-    print(f"Data directory: {topo_dir}")
-    print()
+    output.header("GEOTIFF ELEVATION MAP TEST", f"Testing bounds: {bounds}")
+    
+    # Display test configuration
+    test_config = {
+        "Longitude Range": f"{min_lon}° to {max_lon}°",
+        "Latitude Range": f"{min_lat}° to {max_lat}°",
+        "GeoTIFF File": geotiff_file,
+        "Data Directory": topo_dir
+    }
+    output.stats_table("Test Configuration", test_config)
 
     # Check if topo directory exists
     if not os.path.exists(topo_dir):
-        print(f"Warning: Data directory '{topo_dir}' not found!")
-        print("Please ensure you have the data directory.")
+        output.error(f"Data directory '{topo_dir}' not found!")
+        output.info("Please ensure you have the data directory.")
         return False
 
     # Check if GeoTIFF file exists
     geotiff_path = os.path.join(topo_dir, geotiff_file)
     if not os.path.exists(geotiff_path):
-        print(f"Error: GeoTIFF file '{geotiff_path}' not found!")
-        print("Please ensure you have the GeoTIFF file in the data directory.")
+        output.error(f"GeoTIFF file '{geotiff_path}' not found!")
+        output.info("Please ensure you have the GeoTIFF file in the data directory.")
         return False
 
     # List available files in topo directory
     geotiff_files = [
         f for f in os.listdir(topo_dir) if f.endswith(".tif") or f.endswith(".tiff")
     ]
-    print(f"Found {len(geotiff_files)} GeoTIFF files in {topo_dir}:")
+    
+    output.info(f"Found {len(geotiff_files)} GeoTIFF files in {topo_dir}:")
     for f in sorted(geotiff_files):
         file_size = os.path.getsize(os.path.join(topo_dir, f)) / (1024 * 1024)  # MB
-        print(f"  {f} ({file_size:.1f} MB)")
-    print()
+        output.info(f"  • {f} ({file_size:.1f} MB)")
 
     try:
         # Initialize the GeoTiff
-        print("Initializing GeoTiff...")
+        output.subheader("Initializing GeoTiff")
         geotiff = GeoTiff(geotiff_file)
 
         # Get file information using rasterio
         import rasterio
         geotiff_full_path = os.path.join(topo_dir, geotiff_file)
         with rasterio.open(geotiff_full_path) as src:
-            print("GeoTIFF file information:")
-            print(f"  Bounds: {src.bounds}")
-            print(f"  CRS: {src.crs}")
-            print(f"  Shape: {src.shape}")
-            print(f"  Resolution: {src.res}")
-            print(f"  Data type: {src.dtypes}")
-            print(f"  No data value: {src.nodata}")
+            file_info = {
+                "File Bounds": str(src.bounds),
+                "CRS": str(src.crs),
+                "Shape": f"{src.shape[1]} × {src.shape[0]}",
+                "Resolution": f"{src.res[0]:.6f}°, {src.res[1]:.6f}°",
+                "Data Type": str(src.dtypes[0]),
+                "No Data Value": str(src.nodata)
+            }
+            output.stats_table("GeoTIFF File Information", file_info)
             
             # Check if bounds are within file coverage
             file_bounds = src.bounds
             if (max_lon < file_bounds.left or min_lon > file_bounds.right or
                 max_lat < file_bounds.bottom or min_lat > file_bounds.top):
-                print(f"\nWarning: Requested bounds {bounds} are outside file coverage!")
-                print(f"File covers: {file_bounds}")
+                output.error(f"Requested bounds {bounds} are outside file coverage!")
+                output.error(f"File covers: {file_bounds}")
                 return False
 
-        print()
-
         # Get elevation data
-        print("Getting elevation data...")
+        output.subheader("Processing elevation data")
         start_time = time.time()
-        elevation_data = geotiff.get_elevation(bounds, topo_dir)
+        
+        with output.progress_context("Extracting elevation data"):
+            elevation_data = geotiff.get_elevation(bounds, topo_dir)
+        
         end_time = time.time()
 
-        print(
-            f"Elevation data extraction completed in {end_time - start_time:.2f} seconds"
-        )
-        print(f"Elevation data shape: {elevation_data.shape}")
-        print(f"Elevation data type: {elevation_data.dtype}")
-        print()
-
         # Analyze the elevation data
-        print("ELEVATION DATA ANALYSIS:")
-        print("-" * 30)
-        print(f"Min elevation: {np.min(elevation_data):.1f} meters")
-        print(f"Max elevation: {np.max(elevation_data):.1f} meters")
-        print(f"Mean elevation: {np.mean(elevation_data):.1f} meters")
-        print(f"Std deviation: {np.std(elevation_data):.1f} meters")
-        print(f"Data points: {elevation_data.size:,}")
-        print()
+        output.success(f"Elevation data extraction completed in {end_time - start_time:.2f} seconds")
+        
+        data_info = {
+            "Data Shape": f"{elevation_data.shape[1]} × {elevation_data.shape[0]}",
+            "Data Type": str(elevation_data.dtype),
+            "Total Points": f"{elevation_data.size:,}"
+        }
+        output.stats_table("Data Information", data_info)
+
+        # Statistical analysis
+        elevation_analysis = {
+            "Min Elevation": f"{np.min(elevation_data):.1f} m",
+            "Max Elevation": f"{np.max(elevation_data):.1f} m", 
+            "Mean Elevation": f"{np.mean(elevation_data):.1f} m",
+            "Std Deviation": f"{np.std(elevation_data):.1f} m"
+        }
+        output.stats_table("Elevation Analysis", elevation_analysis)
 
         # Check for any issues
         zero_count = np.sum(elevation_data == 0)
-        if zero_count > 0:
-            print(
-                f"Warning: {zero_count} zero elevation points found (possible no-data values)"
-            )
-
         negative_count = np.sum(elevation_data < 0)
+        
+        if zero_count > 0:
+            output.warning(f"{zero_count:,} zero elevation points found (possible no-data values)")
+
         if negative_count > 0:
-            print(f"Info: {negative_count} below sea level points found")
+            output.info(f"{negative_count:,} below sea level points found")
 
         # Calculate some statistics
         land_points = elevation_data[elevation_data > 0]
         if len(land_points) > 0:
-            print(f"Land elevation stats:")
-            print(f"  Min: {np.min(land_points):.1f}m")
-            print(f"  Max: {np.max(land_points):.1f}m")
-            print(f"  Mean: {np.mean(land_points):.1f}m")
-
-        print()
+            land_stats = {
+                "Min Land Elevation": f"{np.min(land_points):.1f} m",
+                "Max Land Elevation": f"{np.max(land_points):.1f} m",
+                "Mean Land Elevation": f"{np.mean(land_points):.1f} m"
+            }
+            output.stats_table("Land Elevation Statistics", land_stats)
 
         # Create visualizations if requested
         if save_plots:
-            print("Creating visualizations...")
+            output.subheader("Creating visualizations")
             create_elevation_plots(elevation_data, bounds, geotiff_file, save_plots)
 
-        print("Test completed successfully!")
+        output.success("Test completed successfully!")
         return True
 
     except Exception as e:
-        print(f"Error during elevation data processing: {e}")
+        output.error(f"Error during elevation data processing: {e}")
         import traceback
-
+        output.error("Full traceback:")
         traceback.print_exc()
         return False
 
@@ -217,13 +221,13 @@ def create_elevation_plots(elevation_data, bounds, geotiff_file, save_plots=True
     if save_plots:
         output_file = f"geotiff_elevation_analysis_{geotiff_file.replace('.tif', '')}.png"
         plt.savefig(output_file, dpi=300, bbox_inches="tight")
-        print(f"Visualization saved as: {output_file}")
+        output.file_saved(output_file, "visualization")
 
     # Show the plot (comment out if running headless)
     try:
         plt.show()
     except:
-        print("Display not available, plot saved only.")
+        output.info("Display not available, plot saved only.")
 
 
 def main():
@@ -238,10 +242,10 @@ def main():
     )
     parser.add_argument("--max-lat", type=float, required=True, help="Maximum latitude")
     parser.add_argument(
-        "--geotiff-file",
+        "--file",
         type=str,
-        default="output_USGS10m.tif",
-        help="GeoTIFF file name (default: output_USGS10m.tif)",
+        required=True,
+        help="GeoTIFF filename (should be in the topo directory)",
     )
     parser.add_argument(
         "--topo-dir",
@@ -257,23 +261,20 @@ def main():
 
     # Validate bounds
     if args.min_lon >= args.max_lon:
-        print("Error: min-lon must be less than max-lon")
+        output.error("min-lon must be less than max-lon")
         sys.exit(1)
 
     if args.min_lat >= args.max_lat:
-        print("Error: min-lat must be less than max-lat")
+        output.error("min-lat must be less than max-lat")
         sys.exit(1)
 
     bounds = (args.min_lon, args.min_lat, args.max_lon, args.max_lat)
-
-    success = test_geotiff(bounds, args.geotiff_file, args.topo_dir, not args.no_plots)
+    success = test_geotiff(bounds, args.file, args.topo_dir, not args.no_plots)
 
     if success:
-        print("\n🎉 All tests passed successfully!")
-        sys.exit(0)
+        output.success("🎉 All tests passed successfully!")
     else:
-        print("\n❌ Tests failed!")
-        sys.exit(1)
+        output.error("❌ Tests failed!")
 
 
 if __name__ == "__main__":

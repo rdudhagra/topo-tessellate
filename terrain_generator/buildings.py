@@ -19,6 +19,9 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from collections import defaultdict
 
+# Import the new console output system
+from .console import output
+
 
 @dataclass
 class Building:
@@ -100,32 +103,59 @@ class BuildingsExtractor:
 
     # Tags to exclude (small structures, utilities, etc.)
     EXCLUDED_TAGS = {
+        "building": [
+            "roof",
+            "entrance",
+            "steps",
+            "porch",
+            "balcony",
+            "canopy",
+            "carport",
+            "shed",
+            "hut",
+            "cabin",
+            "kiosk",
+            "shelter",
+            "toilets",
+            "utility",
+            "service",
+            "transformer_tower",
+            "water_tower",
+            "silo",
+            "tank",
+            "bunker",
+            "ruins",
+            "bridge",
+            "tunnel",
+            "dam",
+            "pier",
+        ],
         "amenity": [
-            "lamp",
-            "bench",
+            "toilets",
             "waste_basket",
-            "bicycle_parking",
-            "parking_meter",
+            "recycling",
+            "bench",
+            "drinking_water",
+            "fountain",
             "post_box",
             "telephone",
+            "atm",
             "vending_machine",
+            "charging_station",
+            "fuel",
+            "parking",
+            "bicycle_parking",
+            "motorcycle_parking",
+            "taxi",
         ],
-        "barrier": ["*"],  # All barriers
-        "highway": ["*"],  # All highway features
-        "natural": ["tree", "shrub"],
-        "power": ["*"],  # Power infrastructure
-        "man_made": [
-            "utility_pole",
-            "street_lamp",
-            "surveillance",
-            "antenna",
-            "flagpole",
-            "chimney",
-            "mast",
-            "pole",
-            "pipeline",
-        ],
-        "leisure": ["playground"],
+        "leisure": ["playground", "picnic_table", "bbq", "firepit"],
+        "tourism": ["information", "viewpoint", "picnic_site"],
+        "highway": ["*"],
+        "railway": ["*"],
+        "waterway": ["*"],
+        "natural": ["*"],
+        "landuse": ["*"],
+        "power": ["*"],
     }
 
     def __init__(
@@ -157,10 +187,11 @@ class BuildingsExtractor:
         Returns:
             Cache filename
         """
-        # Create a hash of the bounds for the filename
-        bounds_str = f"{bounds[0]:.6f},{bounds[1]:.6f},{bounds[2]:.6f},{bounds[3]:.6f}"
-        bounds_hash = hashlib.md5(bounds_str.encode()).hexdigest()[:16]
-        return os.path.join(self.CACHE_DIR, f"buildings_cache_{bounds_hash}.pkl.gz")
+        bounds_str = f"{bounds[0]:.4f}_{bounds[1]:.4f}_{bounds[2]:.4f}_{bounds[3]:.4f}"
+        bounds_hash = hashlib.md5(bounds_str.encode()).hexdigest()[:8]
+        return os.path.join(
+            self.CACHE_DIR, f"buildings_cache_{bounds_hash}_{bounds_str}.pkl.gz"
+        )
 
     def _is_cache_valid(self, cache_file: str) -> bool:
         """Check if the cache file is still valid.
@@ -175,10 +206,10 @@ class BuildingsExtractor:
             return False
 
         # Check if cache is not too old
-        cache_age_seconds = time.time() - os.path.getmtime(cache_file)
-        cache_age_days = cache_age_seconds / (24 * 3600)
+        cache_age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
+        max_age_hours = self.cache_max_age_days * 24
 
-        return cache_age_days <= self.cache_max_age_days
+        return cache_age_hours <= max_age_hours
 
     def _save_to_cache(
         self,
@@ -211,11 +242,9 @@ class BuildingsExtractor:
         try:
             with gzip.open(cache_file, "wb") as f:
                 pickle.dump(cache_data, f, protocol=pickle.HIGHEST_PROTOCOL)
-            print(
-                f"Cached {len(buildings)} buildings (with default heights) to {cache_file}"
-            )
+            output.cache_info(f"Saved {len(buildings)} buildings (with default heights)", is_hit=False)
         except Exception as e:
-            print(f"Warning: Could not save cache: {e}")
+            output.warning(f"Could not save cache: {e}")
 
     def _load_from_cache(
         self, bounds: Tuple[float, float, float, float]
@@ -245,20 +274,18 @@ class BuildingsExtractor:
                 cache_data.get("bounds") != bounds
                 or cache_data.get("filter_type") != "default_height"
             ):
-                print(f"Warning: Cache mismatch, ignoring cache")
+                output.warning("Cache mismatch, ignoring cache")
                 return None
 
             buildings = cache_data["buildings"]
             stats = cache_data["stats"]
             cache_age_hours = (time.time() - cache_data["timestamp"]) / 3600
 
-            print(
-                f"Loaded {len(buildings)} buildings from cache (age: {cache_age_hours:.1f} hours)"
-            )
+            output.cache_info(f"Loaded {len(buildings)} buildings (age: {cache_age_hours:.1f} hours)")
             return buildings, stats
 
         except Exception as e:
-            print(f"Warning: Could not load cache: {e}")
+            output.warning(f"Could not load cache: {e}")
             return None
 
     def clear_cache(
@@ -274,7 +301,7 @@ class BuildingsExtractor:
             cache_file = self._get_cache_filename(bounds)
             if os.path.exists(cache_file):
                 os.remove(cache_file)
-                print(f"Cleared cache for bounds {bounds}")
+                output.success(f"Cleared cache for bounds {bounds}")
         else:
             # Clear all cache files
             cache_dir = Path(self.CACHE_DIR)
@@ -282,7 +309,7 @@ class BuildingsExtractor:
                 cache_files = list(cache_dir.glob("buildings_cache_*.pkl.gz"))
                 for cache_file in cache_files:
                     cache_file.unlink()
-                print(f"Cleared {len(cache_files)} cache files")
+                output.success(f"Cleared {len(cache_files)} cache files")
 
     def build_overpass_query(self, bounds: Tuple[float, float, float, float]) -> str:
         """Build Overpass API query for buildings in the given bounds.
@@ -410,7 +437,7 @@ out geom;"""
         Returns:
             List of Building objects with polygon and height data
         """
-        print(f"Extracting buildings for bounds: {bounds}")
+        output.subheader(f"Extracting buildings for bounds: {bounds}")
 
         # Try to load from cache first
         if not force_refresh:
@@ -425,22 +452,23 @@ out geom;"""
         query = self.build_overpass_query(bounds)
 
         try:
-            response = requests.post(
-                self.OVERPASS_URL,
-                data=query,
-                timeout=self.timeout,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            response.raise_for_status()
+            with output.progress_context("Fetching building data from OpenStreetMap"):
+                response = requests.post(
+                    self.OVERPASS_URL,
+                    data=query,
+                    timeout=self.timeout,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+                response.raise_for_status()
 
         except requests.RequestException as e:
-            print(f"Error fetching data from Overpass API: {e}")
+            output.error(f"Error fetching data from Overpass API: {e}")
             return []
 
         try:
             data = response.json()
         except json.JSONDecodeError as e:
-            print(f"Error parsing JSON response: {e}")
+            output.error(f"Error parsing JSON response: {e}")
             return []
 
         buildings = []
@@ -453,29 +481,33 @@ out geom;"""
         for element in data.get("elements", []):
             processed += 1
 
+            # Skip if no geometry
+            if "geometry" not in element:
+                excluded_no_geometry += 1
+                continue
+
             # Extract tags
             tags = element.get("tags", {})
 
-            # Skip excluded features
+            # Check if this should be excluded
             if self.is_excluded_feature(tags):
                 excluded_tags += 1
                 continue
 
-            # Extract coordinates - REQUIRED for 3D modeling
+            # Extract coordinates from geometry
             coordinates = []
-            if element["type"] == "way" and "geometry" in element:
-                coordinates = [
-                    (node["lon"], node["lat"]) for node in element["geometry"]
-                ]
-            elif element["type"] == "relation":
-                # For relations, we'd need to resolve member ways - simplified for now
-                continue
+            for coord in element["geometry"]:
+                coordinates.append((coord["lon"], coord["lat"]))
 
-            if len(coordinates) < 3:  # Need at least 3 points for a polygon
+            # Skip if insufficient coordinates for a polygon
+            if len(coordinates) < 3:
                 excluded_no_geometry += 1
                 continue
 
-            # Extract height (always returns a value, either explicit or default)
+            # Calculate area
+            area = self.calculate_area(coordinates)
+
+            # Extract height (explicit or default)
             height = self.extract_height(tags)
 
             # Track if height was explicit or default
@@ -491,7 +523,7 @@ out geom;"""
                 default_height_count += 1
 
             # Determine building type
-            building_type = tags.get("building", "unknown")
+            building_type = tags.get("building", "yes")
             if building_type == "yes":
                 # Try to get more specific type from other tags
                 for tag in ["amenity", "leisure", "shop", "tourism"]:
@@ -499,15 +531,9 @@ out geom;"""
                         building_type = f"{tag}:{tags[tag]}"
                         break
 
-            # Calculate area (guaranteed to have coordinates at this point)
-            area = self.calculate_area(coordinates)
-            if area <= 0:  # Skip buildings with invalid area
-                excluded_no_geometry += 1
-                continue
-
-            # Create building object - guaranteed to have both polygon and height data
+            # Create building object
             building = Building(
-                osm_id=str(element["id"]),
+                osm_id=element.get("id", "unknown"),
                 building_type=building_type,
                 coordinates=coordinates,
                 tags=tags,
@@ -530,11 +556,11 @@ out geom;"""
 
         self.buildings = buildings
 
-        print(f"Extracted {len(buildings)} buildings from {processed} elements")
-        print(
+        output.success(f"Extracted {len(buildings)} buildings from {processed} elements")
+        output.info(
             f"Height data: {explicit_height_count} explicit, {default_height_count} default ({self.DEFAULT_HEIGHT}m)"
         )
-        print(
+        output.info(
             f"Excluded: {excluded_no_geometry} (no geometry), {excluded_tags} (unwanted tags)"
         )
 
@@ -589,51 +615,58 @@ out geom;"""
         return stats
 
     def print_stats(self):
-        """Print detailed statistics about the extracted buildings."""
+        """Print extraction statistics."""
         stats = self.get_stats()
-
+        
         if "error" in stats:
-            print(stats["error"])
+            output.error(stats["error"])
             return
 
-        print("\n=== Building Extraction Statistics ===")
-        print(f"Total buildings extracted: {stats['total_buildings']}")
-        print(f"Elements processed: {stats['processed_elements']}")
-        print(f"Elements excluded: {stats['total_excluded']}")
-        print(f"  - No geometry: {stats.get('excluded_no_geometry', 0)}")
-        print(f"  - Unwanted tags: {stats.get('excluded_tags', 0)}")
+        output.info(f"\n=== Buildings Extraction Statistics ===")
+        output.info(f"Total buildings extracted: {stats['total_buildings']}")
+        output.info(f"Buildings with area: {stats['buildings_with_area']}")
+        output.info(f"Buildings with height: {stats['buildings_with_height']}")
+        
+        output.info(f"\nHeight Information:")
+        output.info(f"  Explicit height: {stats['buildings_with_explicit_height']}")
+        output.info(f"  Default height: {stats['buildings_with_default_height']} (using {stats['default_height_meters']}m)")
+        
+        if stats["buildings_with_height"] > 0:
+            output.info(f"\nHeight Statistics:")
+            output.info(f"  Average height: {stats['average_building_height_m']:.1f}m")
+            output.info(f"  Tallest building: {stats['tallest_building_height_m']:.1f}m")
+            output.info(f"  Shortest building: {stats['shortest_building_height_m']:.1f}m")
 
-        print(f"\n=== Height Data ===")
-        print(
-            f"Buildings with explicit height: {stats.get('buildings_with_explicit_height', 0)}"
-        )
-        print(
-            f"Buildings with default height: {stats.get('buildings_with_default_height', 0)} ({stats['default_height_meters']}m)"
-        )
-        print(f"Total buildings with height: {stats['buildings_with_height']} (100%)")
+        if stats["buildings_with_area"] > 0:
+            output.info(f"\nArea Statistics:")
+            output.info(f"  Total area: {stats['total_building_area_m2']:.0f} m² ({stats['total_building_area_m2']/1_000_000:.2f} km²)")
+            output.info(f"  Average area: {stats['average_building_area_m2']:.0f} m²")
+            output.info(f"  Largest building: {stats['largest_building_area_m2']:.0f} m²")
+            output.info(f"  Smallest building: {stats['smallest_building_area_m2']:.0f} m²")
 
-        print(f"\n=== Area Statistics ===")
-        print(f"Total building area: {stats['total_building_area_m2']:,.0f} m²")
-        print(f"Average building area: {stats['average_building_area_m2']:,.0f} m²")
-        print(f"Largest building: {stats['largest_building_area_m2']:,.0f} m²")
-        print(f"Smallest building: {stats['smallest_building_area_m2']:,.0f} m²")
+        # Processing statistics
+        if "processed_elements" in stats:
+            output.info(f"\nProcessing Statistics:")
+            output.info(f"  Elements processed: {stats['processed_elements']}")
+            output.info(f"  Elements excluded: {stats.get('total_excluded', 0)}")
+            output.info(f"    - No geometry: {stats.get('excluded_no_geometry', 0)}")
+            output.info(f"    - Unwanted tags: {stats.get('excluded_tags', 0)}")
 
-        print(f"\n=== Height Statistics ===")
-        print(f"Average building height: {stats['average_building_height_m']:.1f} m")
-        print(f"Tallest building: {stats['tallest_building_height_m']:.1f} m")
-        print(f"Shortest building: {stats['shortest_building_height_m']:.1f} m")
-
-        print(f"\n=== Building Types ===")
-        building_types = stats["building_type_distribution"]
-        for building_type, count in sorted(
-            building_types.items(), key=lambda x: x[1], reverse=True
-        ):
-            print(f"{building_type}: {count}")
+        # Building types
+        if "building_type_distribution" in stats and stats["building_type_distribution"]:
+            output.info(f"\nBuilding Type Distribution:")
+            building_types = stats["building_type_distribution"]
+            # Sort by count, show top 10
+            sorted_types = sorted(building_types.items(), key=lambda x: x[1], reverse=True)
+            for building_type, count in sorted_types[:10]:
+                output.info(f"  {building_type}: {count}")
+            if len(sorted_types) > 10:
+                output.info(f"  ... and {len(sorted_types) - 10} more types")
 
 
 if __name__ == "__main__":
     # Example usage with default height support
-    print("=== Buildings Extractor with Default Height Support ===")
+    output.header("=== Buildings Extractor with Default Height Support ===")
 
     # Downtown SF bounds (smaller area for testing)
     bounds = (-122.42, 37.77, -122.38, 37.80)
@@ -643,14 +676,14 @@ if __name__ == "__main__":
 
     extractor.print_stats()
 
-    print(f"\nExample: First building details:")
+    output.info(f"\nExample: First building details:")
     if buildings:
         building = buildings[0]
-        print(f"  OSM ID: {building.osm_id}")
-        print(f"  Type: {building.building_type}")
-        print(f"  Area: {building.area:.0f} m²")
-        print(f"  Height: {building.height:.1f} m")
-        print(f"  Coordinates: {len(building.coordinates)} points")
+        output.info(f"  OSM ID: {building.osm_id}")
+        output.info(f"  Type: {building.building_type}")
+        output.info(f"  Area: {building.area:.0f} m²")
+        output.info(f"  Height: {building.height:.1f} m")
+        output.info(f"  Coordinates: {len(building.coordinates)} points")
 
         # Check if height was explicit or default
         has_explicit = (
@@ -661,20 +694,20 @@ if __name__ == "__main__":
         height_source = (
             "explicit" if has_explicit else f"default ({extractor.DEFAULT_HEIGHT}m)"
         )
-        print(f"  Height source: {height_source}")
+        output.info(f"  Height source: {height_source}")
 
     # Demonstrate cache usage
-    print(f"\n=== Demonstrating Cache ===")
-    print("Running the same query again (should load from cache)...")
+    output.info(f"\n=== Demonstrating Cache ===")
+    output.info("Running the same query again (should load from cache)...")
     extractor2 = BuildingsExtractor()
     buildings2 = extractor2.extract_buildings(bounds)
-    print(f"Loaded {len(buildings2)} buildings")
+    output.info(f"Loaded {len(buildings2)} buildings")
 
     # Show cache management
-    print(f"\nCache management:")
-    print(f"- Cache directory: {extractor.CACHE_DIR}")
-    print(f"- Default height: {extractor.DEFAULT_HEIGHT} meters")
-    print(f"- To clear cache: extractor.clear_cache()")
-    print(
+    output.info(f"\nCache management:")
+    output.info(f"- Cache directory: {extractor.CACHE_DIR}")
+    output.info(f"- Default height: {extractor.DEFAULT_HEIGHT} meters")
+    output.info(f"- To clear cache: extractor.clear_cache()")
+    output.info(
         f"- To force refresh: extractor.extract_buildings(bounds, force_refresh=True)"
     )

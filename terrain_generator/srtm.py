@@ -1,44 +1,63 @@
+#!/usr/bin/env python3
+"""
+SRTM Data Handler
+
+This module handles downloading and processing SRTM (Shuttle Radar Topography Mission) 
+elevation data for creating 3D terrain models.
+"""
+
 import os
-import numpy as np
-import rasterio
 import glob
-import concurrent.futures
-import multiprocessing
 import time
+import rasterio
 import numpy as np
+import multiprocessing
+import concurrent.futures
 from .elevation import Elevation
+
+# Import the new console output system
+from .console import output
 
 
 class SRTM(Elevation):
     def _find_required_tiles(self, bounds):
         """
-        Find all SRTM tiles needed to cover the given bounds.
+        Find the SRTM tiles required to cover the given bounds.
 
         Args:
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat)
 
         Returns:
-            list: List of required tile coordinates [(lat, lon), ...]
+            list: List of (lat, lon) tuples for required tiles
         """
         min_lon, min_lat, max_lon, max_lat = bounds
 
-        # Floor to get the southwest corner of each tile
-        min_lat_tile = int(np.floor(min_lat))
-        max_lat_tile = int(np.floor(max_lat))
-        min_lon_tile = int(np.floor(min_lon))
-        max_lon_tile = int(np.floor(max_lon))
+        # Calculate the tiles needed
+        lat_min = int(np.floor(min_lat))
+        lat_max = int(np.floor(max_lat))
+        lon_min = int(np.floor(min_lon))
+        lon_max = int(np.floor(max_lon))
 
-        required_tiles = []
-        for lat in range(min_lat_tile, max_lat_tile + 1):
-            for lon in range(min_lon_tile, max_lon_tile + 1):
-                # For western hemisphere (negative longitude), we use negative values
-                required_tiles.append((lat, lon))
+        tiles = []
+        for lat in range(lat_min, lat_max + 1):
+            for lon in range(lon_min, lon_max + 1):
+                tiles.append((lat, lon))
 
-        return required_tiles
+        return tiles
 
     def _find_tile_files(self, required_tiles, topo_dir="topo"):
-        """Find available SRTM files for required tiles."""
+        """
+        Find the actual SRTM tile files for the required coordinates.
+
+        Args:
+            required_tiles (list): List of (lat, lon) tuples
+            topo_dir (str): Directory containing SRTM data files
+
+        Returns:
+            dict: Dictionary mapping (lat, lon) to file paths
+        """
         tile_files = {}
+
         for lat, lon in required_tiles:
             # SRTM naming convention: Nx.Wx.hgt.zip where x=latitude, longitude digits
             pattern = f"N{lat:02d}W{abs(lon):03d}*.hgt.zip"
@@ -131,7 +150,7 @@ class SRTM(Elevation):
         Returns:
             numpy.ndarray: The generated elevation data
         """
-        print(f"Generating elevation data for bounds: {bounds}")
+        output.progress_info(f"Generating elevation data for bounds: {bounds}")
 
         # Find required tiles
         required_tiles = self._find_required_tiles(bounds)
@@ -142,9 +161,9 @@ class SRTM(Elevation):
                 f"No SRTM tiles found in {topo_dir} for the specified bounds"
             )
 
-        print(f"Using {len(tile_files)} SRTM tiles:")
+        output.info(f"Using {len(tile_files)} SRTM tiles:")
         for coords in tile_files.keys():
-            print(f"  N{coords[0]}W{-coords[1]}")
+            output.info(f"  N{coords[0]}W{-coords[1]}")
 
         # Stitch the tiles with standard SRTM arrangement
         elevation_data = self._stitch_srtm_tiles(tile_files)
@@ -185,7 +204,7 @@ class SRTM(Elevation):
         Returns:
             numpy.ndarray: Combined elevation data with proper orientation
         """
-        print("Reading and arranging SRTM tiles in parallel...")
+        output.progress_info("Reading and arranging SRTM tiles in parallel...")
 
         # Use ThreadPoolExecutor instead of ProcessPoolExecutor to avoid pickling issues
         start_time = time.time()
@@ -197,7 +216,7 @@ class SRTM(Elevation):
 
         # Convert results to a dictionary
         tile_data = {coords: info for coords, info in results}
-        print(
+        output.success(
             f"Tile reading completed in {time.time() - start_time:.2f} seconds using {num_cores} cores"
         )
 
@@ -229,7 +248,7 @@ class SRTM(Elevation):
             # Higher longitudes go to the right
             col = lon - min_lon
 
-            print(f"  Placing tile N{lat}W{-lon} at position ({row}, {col})")
+            output.info(f"  Placing tile N{lat}W{-lon} at position ({row}, {col})")
 
             # Calculate the starting position in the merged grid
             start_row = row * tile_height
@@ -242,7 +261,7 @@ class SRTM(Elevation):
 
         # Flip the entire grid vertically to get north-up orientation
         # This step makes North at the top and South at the bottom
-        print("  Applying vertical flip for north-up orientation")
+        output.info("  Applying vertical flip for north-up orientation")
         merged_data = np.flipud(merged_data)
 
         return merged_data

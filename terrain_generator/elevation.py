@@ -2,6 +2,9 @@ from abc import abstractmethod
 import numpy as np
 from geopy.distance import geodesic
 
+# Import the new console output system
+from .console import output
+
 class Elevation:
     def __init__(self):
         pass
@@ -58,19 +61,19 @@ class Elevation:
             (srtm_max_y - max_y) * y_scale
         )
 
-        print(f"  Cropping elevation data using geopy (original logic):")
-        print(f"    Original shape: {elevation_data.shape}")
-        print(
+        output.info(f"  Cropping elevation data using geopy (original logic):")
+        output.info(f"    Original shape: {elevation_data.shape}")
+        output.info(
             f"    SRTM bounds: lat {srtm_min_lat}-{srtm_max_lat}, lon {srtm_min_lon}-{srtm_max_lon}"
         )
-        print(f"    Crop bounds: lat {min_lat}-{max_lat}, lon {min_lon}-{max_lon}")
-        print(
+        output.info(f"    Crop bounds: lat {min_lat}-{max_lat}, lon {min_lon}-{max_lon}")
+        output.info(
             f"    SRTM extent: {(srtm_max_x-srtm_min_x)/1000:.2f} km x {(srtm_max_y-srtm_min_y)/1000:.2f} km"
         )
-        print(
+        output.info(
             f"    Scale: {x_scale:.6f} pixels/meter (x), {y_scale:.6f} pixels/meter (y)"
         )
-        print(
+        output.info(
             f"    Crop indices: x {elevation_data_min_index_x}-{elevation_data_max_index_x}, y {elevation_data_min_index_y}-{elevation_data_max_index_y}"
         )
 
