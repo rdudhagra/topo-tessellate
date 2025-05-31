@@ -2,7 +2,7 @@
 """
 Test script for terrain_generator/elevation.py
 
-This script tests the ElevationMap class with San Francisco Bay Area coordinates.
+This script tests the SRTM class with San Francisco Bay Area coordinates.
 Usage: python test_elevation.py --min-lon -122.67 --min-lat 37.22 --max-lon -121.75 --max-lat 38.18
 """
 
@@ -18,16 +18,16 @@ import time
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 try:
-    from terrain_generator.elevation import ElevationMap
+    from terrain_generator.srtm import SRTM
 except ImportError as e:
-    print(f"Error importing ElevationMap: {e}")
-    print("Make sure the terrain_generator directory exists and contains elevation.py")
+    print(f"Error importing SRTM: {e}")
+    print("Make sure the terrain_generator directory exists and contains srtm.py")
     sys.exit(1)
 
 
-def test_elevation_map(bounds, topo_dir="topo", save_plots=True):
+def test_srtm(bounds, topo_dir="topo", save_plots=True):
     """
-    Test the ElevationMap with given bounds.
+    Test the SRTM with given bounds.
 
     Args:
         bounds (tuple): (min_lon, min_lat, max_lon, max_lat)
@@ -64,17 +64,17 @@ def test_elevation_map(bounds, topo_dir="topo", save_plots=True):
     print()
 
     try:
-        # Initialize the ElevationMap
-        print("Initializing ElevationMap...")
-        elevation_map = ElevationMap()
+        # Initialize the SRTM
+        print("Initializing SRTM...")
+        srtm = SRTM()
 
         # Test finding required tiles
         print("Finding required SRTM tiles...")
-        required_tiles = elevation_map._find_required_tiles(bounds)
+        required_tiles = srtm._find_required_tiles(bounds)
         print(f"Required tiles: {required_tiles}")
 
         # Test finding tile files
-        tile_files = elevation_map._find_tile_files(required_tiles, topo_dir)
+        tile_files = srtm._find_tile_files(required_tiles, topo_dir)
         print(f"Found {len(tile_files)} of {len(required_tiles)} required tiles:")
         for coords, filepath in tile_files.items():
             print(f"  {coords}: {os.path.basename(filepath)}")
@@ -89,7 +89,7 @@ def test_elevation_map(bounds, topo_dir="topo", save_plots=True):
         # Get elevation data
         print("Getting elevation data...")
         start_time = time.time()
-        elevation_data = elevation_map.get_elevation_data(bounds, topo_dir)
+        elevation_data = srtm.get_elevation_data(bounds, topo_dir)
         end_time = time.time()
 
         print(
@@ -207,7 +207,7 @@ def create_elevation_plots(elevation_data, bounds, save_plots=True):
 
 def main():
     """Main function to parse arguments and run the test."""
-    parser = argparse.ArgumentParser(description="Test the ElevationMap class")
+    parser = argparse.ArgumentParser(description="Test the SRTM class")
     parser.add_argument(
         "--min-lon", type=float, required=True, help="Minimum longitude"
     )
@@ -239,7 +239,7 @@ def main():
 
     bounds = (args.min_lon, args.min_lat, args.max_lon, args.max_lat)
 
-    success = test_elevation_map(bounds, args.topo_dir, not args.no_plots)
+    success = test_srtm(bounds, args.topo_dir, not args.no_plots)
 
     if success:
         print("\n🎉 All tests passed successfully!")

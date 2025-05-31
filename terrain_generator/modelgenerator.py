@@ -13,9 +13,9 @@ from geopy.distance import geodesic
 
 # Handle both direct execution and module import
 try:
-    from .elevation import ElevationMap
+    from .srtm import SRTM
 except ImportError:
-    from elevation import ElevationMap
+    from terrain_generator.srtm import SRTM
 
 
 class ModelGenerator:
