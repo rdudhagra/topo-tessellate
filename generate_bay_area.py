@@ -12,6 +12,7 @@ import numpy as np
 from terrain_generator.modelgenerator import ModelGenerator
 from terrain_generator.buildings import BuildingsExtractor
 from terrain_generator.geotiff import GeoTiff
+from terrain_generator.srtm import SRTM
 from terrain_generator.console import output
 
 
@@ -148,6 +149,7 @@ def generate_terrain(prefix, bounds):
 
     # Create model generator
     generator = ModelGenerator(GeoTiff("output_USGS10m.tif"))
+    # generator = ModelGenerator(SRTM())
 
     try:
         # Generate detailed terrain model
@@ -155,10 +157,10 @@ def generate_terrain(prefix, bounds):
             bounds=bounds,
             topo_dir="topo",
             base_height=2500,
-            water_threshold=5,
-            water_depth=50,
-            elevation_multiplier=2.5,
-            downsample_factor=10,
+            water_threshold=2,
+            water_depth=100,
+            elevation_multiplier=3.5,
+            downsample_factor=5,
             output_prefix=prefix,
         )
 
