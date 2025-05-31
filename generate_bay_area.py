@@ -11,6 +11,7 @@ import matplotlib.patches as patches
 import numpy as np
 from terrain_generator.modelgenerator import ModelGenerator
 from terrain_generator.buildings import BuildingsExtractor
+from terrain_generator.geotiff import GeoTiff
 
 
 def extract_buildings(bounds):
@@ -165,7 +166,7 @@ def generate_terrain(prefix, bounds):
     print("=== Bay Area Terrain Model Generation ===")
 
     # Create model generator
-    generator = ModelGenerator()
+    generator = ModelGenerator(GeoTiff("output_USGS10m.tif"))
 
     try:
         # Generate detailed terrain model
@@ -175,8 +176,8 @@ def generate_terrain(prefix, bounds):
             base_height=2500,
             water_threshold=5,
             water_depth=50,
-            elevation_multiplier=5,
-            downsample_factor=5,
+            elevation_multiplier=2.5,
+            downsample_factor=10,
             output_prefix=prefix,
         )
 
