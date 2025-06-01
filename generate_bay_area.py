@@ -159,7 +159,7 @@ def generate_terrain(prefix, bounds):
             base_height=2500,
             water_threshold=1,
             elevation_multiplier=3.5,
-            downsample_factor=1,
+            downsample_factor=10,
         )
 
         # Save the terrain and water meshes
