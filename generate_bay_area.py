@@ -153,20 +153,18 @@ def generate_terrain(prefix, bounds):
 
     try:
         # Generate detailed terrain model
-        terrain_mesh, water_mesh = generator.generate_terrain_model(
+        result = generator.generate_terrain_model(
             bounds=bounds,
             topo_dir="topo",
             base_height=2500,
-            water_threshold=2,
-            water_depth=100,
+            water_threshold=6,
             elevation_multiplier=3.5,
-            downsample_factor=5,
-            output_prefix=prefix,
+            downsample_factor=50,
         )
 
         # Save the terrain and water meshes
-        generator.save_mesh(terrain_mesh, f"{prefix}_terrain.obj")
-        generator.save_mesh(water_mesh, f"{prefix}_water.obj")
+        generator.save_mesh(result['land_mesh'], f"{prefix}_land.obj")
+        generator.save_mesh(result['base_mesh'], f"{prefix}_base.obj")
 
         output.success("Bay Area terrain model generation complete!")
 

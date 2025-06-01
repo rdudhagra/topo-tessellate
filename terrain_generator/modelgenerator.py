@@ -20,6 +20,8 @@ try:
 except ImportError:
     from terrain_generator.srtm import SRTM
 
+import os
+
 
 class ModelGenerator:
     """
@@ -262,78 +264,120 @@ class ModelGenerator:
 
         return modified_elevation
 
-    def create_water_features(
-        self,
-        elevation_data,
-        bounds,
-        water_threshold=None,
-        water_depth=2.0,
-        base_height=1.0,
-        elevation_multiplier=1.0,
-        min_water_area=100,
-        output_prefix="water_features",
-        connect_water_regions=False,
-        max_connection_gap=5,
-    ):
+    def _create_cutting_plane_mesh(self, bounds, water_level, base_height=1.0, elevation_multiplier=1.0, direction="up"):
         """
-        Process elevation data to extract water features and modify terrain elevation.
-        This method detects water areas and returns modified elevation data and water information.
+        Create a large horizontal plane mesh at the water level for Boolean operations.
 
         Args:
-            elevation_data (numpy.ndarray): 2D array of elevation values
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
-            water_threshold (float, optional): Elevation below which areas are considered water.
-                                             If None, uses automatic detection (10th percentile)
-            water_depth (float): How much to lower water areas below original elevation (meters)
-            base_height (float): Height of the flat base
+            water_level (float): Elevation level for the cutting plane
+            base_height (float): Height of the base
             elevation_multiplier (float): Elevation scaling multiplier
-            min_water_area (int): Minimum number of connected pixels to be considered a water body
-            output_prefix (str): Prefix for output filenames
-            connect_water_regions (bool): Whether to connect nearby water regions
-            max_connection_gap (int): Maximum gap to bridge between water regions
+            direction (str): Direction of the plane ("up" or "down")
+        Returns:
+            meshlib.mrmeshpy.Mesh: Large horizontal plane mesh
+        """
+        # Calculate real-world dimensions
+        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
+        
+        # Make the plane larger than the terrain to ensure complete cutting
+        margin = max(width_meters, height_meters) * 0.1  # 10% margin
+        
+        # Convert water level to model units
+        plane_z = water_level * elevation_multiplier + base_height
+        
+        # Create a large rectangular plane
+        vertices = np.array([
+            [-margin, -margin, plane_z],  # bottom-left
+            [width_meters + margin, -margin, plane_z],  # bottom-right
+            [width_meters + margin, height_meters + margin, plane_z],  # top-right
+            [-margin, height_meters + margin, plane_z]  # top-left
+        ], dtype=np.float32)
+
+        if direction == "down":
+            faces = np.array([
+                [0, 1, 2],  # first triangle
+                [0, 2, 3]   # second triangle
+            ], dtype=np.int32)
+        else:
+            # Flip the triangles to face upward
+            faces = np.array([
+                [0, 2, 1],  # first triangle
+                [0, 3, 2]   # second triangle
+            ], dtype=np.int32)
+        
+        # Create mesh using meshlib
+        plane_mesh = mn.meshFromFacesVerts(faces, vertices)
+        
+        return plane_mesh
+
+    def _split_mesh_at_water_level(self, terrain_mesh, water_level, bounds, base_height=1.0, elevation_multiplier=1.0):
+        """
+        Split the terrain mesh into two parts at the water level using meshlib Boolean operations.
+
+        Args:
+            terrain_mesh (meshlib.mrmeshpy.Mesh): The terrain mesh to split
+            water_level (float): Elevation level at which to split the mesh
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
+            base_height (float): Height of the base
+            elevation_multiplier (float): Elevation scaling multiplier
 
         Returns:
-            tuple: (modified_elevation_data, water_surface_mesh, water_mask)
-                - modified_elevation_data: Elevation data with lowered water areas
-                - water_surface_mesh: Separate mesh representing water surfaces
-                - water_mask: Boolean array indicating water locations
+            tuple: (above_water_mesh, below_water_mesh)
+                - above_water_mesh: Part of the terrain above water level
+                - below_water_mesh: Part of the terrain below water level
         """
-        output.subheader("Processing water features from elevation data")
+        output.subheader("Splitting terrain mesh at water level")
+        
+        # Create a cutting plane at the water level
+        output.progress_info("Creating cutting plane mesh...")
+        cutting_plane_up = self._create_cutting_plane_mesh(bounds, water_level, base_height, elevation_multiplier, direction="up")
+        cutting_plane_down = self._create_cutting_plane_mesh(bounds, water_level, base_height, elevation_multiplier, direction="down")
+        
+        # Split the terrain mesh using Boolean operations
+        output.progress_info("Performing Boolean operations to split mesh...")
+        
+        try:
+            # Get the part above water (terrain minus the plane's lower half-space)
+            # We need to create a solid from the plane by extruding it upward
+            plane_solid_above = mr.copyMesh(cutting_plane_up)
+            
+            # Extrude the plane upward to create a solid half-space above the water level
+            extrude_depth = 100000.0  # Large depth to ensure it covers all terrain below water
+            mr.addBaseToPlanarMesh(plane_solid_above, extrude_depth * elevation_multiplier)
+            
+            # Perform Boolean difference: terrain & solid_above_water = terrain_above_water
+            above_water_result = mr.boolean(terrain_mesh, plane_solid_above, mr.BooleanOperation.Intersection)
+            
+            if above_water_result.valid():
+                above_water_mesh = above_water_result.mesh
+                output.progress_info("Successfully created above-water mesh")
+            else:
+                output.error(f"Failed to create above-water mesh: {above_water_result.errorString}")
+                above_water_mesh = None
+            
+            # Create solid below water level for below-water calculation
+            plane_solid_below = mr.copyMesh(cutting_plane_down)
+            mr.addBaseToPlanarMesh(plane_solid_below, -extrude_depth * elevation_multiplier)
+            
+            # Perform Boolean difference: terrain & solid_below_water = terrain_below_water
+            below_water_result = mr.boolean(terrain_mesh, plane_solid_below, mr.BooleanOperation.Intersection)
+            
+            if below_water_result.valid():
+                below_water_mesh = below_water_result.mesh
+                output.progress_info("Successfully created below-water mesh")
+            else:
+                output.error(f"Failed to create below-water mesh: {below_water_result.errorString}")
+                below_water_mesh = None
+            
+            output.success("Mesh splitting at water level complete!")
+            return above_water_mesh, below_water_mesh
+            
+        except Exception as e:
+            output.error(f"Error during mesh splitting: {e}")
+            return None, None
 
-        # Step 1: Detect water areas from elevation data
-        output.progress_info("Step 1: Detecting water areas...")
-        water_mask = self._detect_water_areas(
-            elevation_data, water_threshold, min_water_area
-        )
-
-        if not np.any(water_mask):
-            output.info("No significant water areas detected.")
-            return elevation_data, None, water_mask
-
-        # Step 2: Modify elevation data directly by lowering water areas
-        output.progress_info("Step 2: Modifying elevation data for water areas...")
-        modified_elevation = self._modify_elevation_for_water(
-            elevation_data, water_mask, water_depth
-        )
-
-        # Step 3: Create water surface mesh for water areas (at original water level)
-        output.progress_info("Step 3: Creating water surface mesh...")
-        water_level = np.mean(elevation_data[water_mask]) if np.any(water_mask) else 0
-        water_surface = self._create_flat_water_surface(
-            water_mask, bounds, water_level, base_height, elevation_multiplier
-        )
-
-        # Step 4: Thicken the water surface
-        output.progress_info("Step 4: Thicken the water surface...")
-        water_volume = self._extrude_water_surface(
-            water_surface, water_depth, elevation_multiplier
-        )
-
-        output.success("Water feature processing complete!")
-
-        return modified_elevation, water_volume, water_mask
-
-    def create_mesh_from_elevation(
+    def _create_mesh_from_elevation(
         self, elevation_data, bounds, base_height=1.0, elevation_multiplier=1.0
     ):
         """
@@ -483,6 +527,34 @@ class ModelGenerator:
         mesh = mn.meshFromFacesVerts(faces_array, vertices_array)
 
         return mesh
+    
+    def _decimate_mesh(self, mesh):
+        """
+        Decimate the mesh to reduce the number of faces.
+        """
+        # Repack mesh optimally.
+        # It's not necessary but highly recommended to achieve the best performance in parallel processing
+        mesh.packOptimally()
+        
+        # Setup decimate parameters
+        settings = mr.DecimateSettings()
+        
+        # Decimation stop thresholds, you may specify one or both
+        settings.maxDeletedFaces = 1000000 # Number of faces to be deleted
+        settings.maxError = 1 # Maximum error when decimation stops
+        
+        # Number of parts to simultaneous processing, greatly improves performance by cost of minor quality loss.
+        # Recommended to set to number of CPU cores or more available for the best performance
+        settings.subdivideParts = os.cpu_count() * 16
+        
+        # Decimate mesh
+        result = mr.decimateMesh(mesh, settings)
+        if not result.cancelled:
+            output.info(f"Removed {result.facesDeleted} faces, {result.vertsDeleted} vertices")
+            output.info(f"Introduced error: {result.errorIntroduced}")
+            
+        else:
+            output.error(f"Failed to decimate mesh")
 
     def save_mesh(self, mesh, filename):
         """
@@ -505,14 +577,7 @@ class ModelGenerator:
         base_height=1.0,
         elevation_multiplier=1.0,
         downsample_factor=10,
-        output_prefix="terrain_model",
         water_threshold=None,
-        water_depth=2.0,
-        min_water_area=100,
-        connect_water_regions=False,
-        max_connection_gap=5,
-        remove_small_components=False,
-        min_component_size=100,
     ):
         """
         Generate a 3D terrain model from SRTM elevation data.
@@ -525,19 +590,15 @@ class ModelGenerator:
             downsample_factor (int): Factor to downsample elevation data (default: 10)
             output_prefix (str): Prefix for output filename
             water_threshold (float, optional): Elevation below which areas are considered water
-            water_depth (float): How much to lower water areas below original elevation (meters)
-            min_water_area (int): Minimum number of connected pixels to be considered a water body
-            connect_water_regions (bool): Whether to connect nearby water regions
-            max_connection_gap (int): Maximum gap to bridge between water regions
-            remove_small_components (bool): Whether to remove small disconnected components
-            min_component_size (int): Minimum number of faces for a component to be kept
 
         Returns:
             dict: Dictionary containing generated meshes and data:
-                - 'terrain_mesh': The main terrain mesh
+                - 'terrain_mesh': The main terrain mesh (or above-water part if split)
                 - 'water_mesh': Water surface mesh (if extract_water=True)
                 - 'water_mask': Boolean array indicating water locations (if extract_water=True)
                 - 'elevation_data': The elevation data used
+                - 'below_water_mesh': Part of terrain below water level (if split_at_water_level=True)
+                - 'above_water_mesh': Part of terrain above water level (if split_at_water_level=True)
         """
         output.header("Terrain Model Generation", f"Bounds: {bounds}")
         output.info(f"Water extraction: {water_threshold}")
@@ -556,27 +617,37 @@ class ModelGenerator:
                 elevation_data, downsample_factor
             )
 
-        # Extract water features
-        output.subheader("Extracting water features")
-        modified_elevation, water_mesh, water_mask = self.create_water_features(
-            elevation_data,
-            bounds,
-            water_threshold=water_threshold,
-            water_depth=water_depth,
-            base_height=base_height,
-            elevation_multiplier=elevation_multiplier,
-            min_water_area=min_water_area,
-            output_prefix=output_prefix,
-            connect_water_regions=connect_water_regions,
-            max_connection_gap=max_connection_gap,
+        # Create terrain mesh
+        output.subheader("Creating terrain mesh")
+        terrain = self._create_mesh_from_elevation(
+            elevation_data, bounds, base_height, elevation_multiplier
         )
 
-        # Update result with water features
-        output.subheader("Creating terrain mesh")
-        terrain = self.create_mesh_from_elevation(
-            modified_elevation, bounds, base_height, elevation_multiplier
+        # Split the terrain mesh at water level
+        output.subheader("Splitting terrain mesh at water level")
+
+        output.progress_info(f"Splitting at water level: {water_threshold:.2f} meters")
+
+        land, base = self._split_mesh_at_water_level(
+            terrain, water_threshold, bounds, base_height, elevation_multiplier
         )
+
+        # Decimate the meshes
+        output.subheader("Decimating meshes")
+
+        output.progress_info("Decimating land mesh")
+        self._decimate_mesh(land)
+
+        output.progress_info("Decimating base mesh")
+        self._decimate_mesh(base)
+
+        # Create result dictionary
+        result = {
+            'elevation_data': elevation_data,
+            'land_mesh': land,
+            'base_mesh': base
+        }
 
         output.success("Terrain model generation complete!")
 
-        return terrain, water_mesh
+        return result
