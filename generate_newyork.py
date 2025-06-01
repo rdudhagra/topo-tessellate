@@ -20,7 +20,7 @@ def generate_terrain(prefix, bounds):
             bounds=bounds,
             topo_dir="topo",
             base_height=500,
-            water_threshold=51,
+            water_threshold=1,
             elevation_multiplier=3,
             downsample_factor=1,
         )
