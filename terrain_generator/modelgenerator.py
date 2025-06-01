@@ -88,182 +88,6 @@ class ModelGenerator:
 
         return downsampled
 
-    def _detect_water_areas(
-        self, elevation_data, water_threshold=None, min_water_area=100
-    ):
-        """
-        Detect water areas in elevation data based on elevation thresholds and area constraints.
-
-        Args:
-            elevation_data (numpy.ndarray): 2D array of elevation values
-            water_threshold (float, optional): Elevation below which areas are considered water.
-                                             If None, uses percentile-based approach.
-            min_water_area (int): Minimum number of connected pixels to be considered a water body
-
-        Returns:
-            numpy.ndarray: Boolean mask where True indicates water areas
-        """
-        from scipy import ndimage
-        from skimage.measure import label
-
-        # Determine water threshold
-        if water_threshold is None:
-            # Use a percentile-based approach: areas in the lowest 10% of elevations
-            water_threshold = np.percentile(elevation_data, 10)
-
-        # Initial water mask based on elevation
-        water_mask = elevation_data <= water_threshold
-
-        # Filter small water bodies based on connected component analysis
-        labeled_water = label(water_mask, connectivity=2)
-
-        # Count pixels in each component
-        component_sizes = np.bincount(labeled_water.ravel())
-
-        # Throw out `0` since this is the land
-        component_sizes = component_sizes[1:]
-
-        # Keep only components larger than minimum area
-        large_components = np.where(component_sizes >= min_water_area)[0]
-
-        # Increment the large components by 1 to account for the land being removed
-        large_components += 1
-
-        # Create final water mask
-        final_water_mask = np.isin(labeled_water, large_components)
-
-        water_pixel_count = np.sum(final_water_mask)
-        total_pixels = elevation_data.size
-        water_percentage = (water_pixel_count / total_pixels) * 100
-
-        output.progress_info(
-            f"Detected {water_pixel_count} water pixels ({water_percentage:.1f}% of area)"
-        )
-
-        return final_water_mask
-
-    def _create_flat_water_surface(
-        self, water_mask, bounds, water_level, base_height=1.0, elevation_multiplier=1.0
-    ):
-        """
-        Create a flat surface mesh for water areas.
-
-        Args:
-            water_mask (numpy.ndarray): Boolean mask indicating water areas
-            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
-            water_level (float): Elevation level for water surface
-            base_height (float): Height of the base
-            elevation_multiplier (float): Elevation scaling multiplier
-
-        Returns:
-            meshlib.mrmeshpy.Mesh: Flat water surface mesh
-        """
-        height, width = water_mask.shape
-
-        # Calculate real-world dimensions
-        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
-        scale_x = width_meters / width
-        scale_y = height_meters / height
-
-        # Convert water level to model units
-        surface_z = water_level * elevation_multiplier + base_height
-
-        vertices = []
-        faces = []
-
-        # Create vertex index map for water pixels
-        vertex_indices = {}
-        vertex_count = 0
-
-        # Step 1: Create vertices for all water pixels
-        for y in range(height):
-            for x in range(width):
-                if water_mask[y, x]:
-                    px = x * scale_x
-                    py = y * scale_y
-
-                    vertices.append([px, py, surface_z])
-                    vertex_indices[(y, x)] = vertex_count
-                    vertex_count += 1
-
-        # Step 2: Create faces for water surface
-        for y in range(height - 1):
-            for x in range(width - 1):
-                # Check all 4 corners of this quad
-                corners = [(y, x), (y, x + 1), (y + 1, x), (y + 1, x + 1)]
-                water_corners = [water_mask[cy, cx] for cy, cx in corners]
-
-                if all(water_corners):
-                    # All 4 corners are water - create 2 triangles
-                    v0 = vertex_indices[(y, x)]  # bottom-left
-                    v1 = vertex_indices[(y, x + 1)]  # bottom-right
-                    v2 = vertex_indices[(y + 1, x)]  # top-left
-                    v3 = vertex_indices[(y + 1, x + 1)]  # top-right
-
-                    # Counter-clockwise winding for upward normal
-                    faces.append([v0, v1, v2])
-                    faces.append([v1, v3, v2])
-
-        if not vertices:
-            # Return empty mesh if no water found
-            vertices = np.array([[0, 0, 0]], dtype=np.float32)
-            faces = np.array([[0, 0, 0]], dtype=np.int32)
-        else:
-            vertices = np.array(vertices, dtype=np.float32)
-            faces = np.array(faces, dtype=np.int32)
-
-        # Create mesh using meshlib
-        water_surface = mn.meshFromFacesVerts(faces, vertices)
-
-        return water_surface
-
-    def _extrude_water_surface(
-        self, water_surface, water_depth, elevation_multiplier=1.0
-    ):
-        """
-        Extrude the water surface to create a volume with thickness.
-        """
-        # Create a new mesh for the water volume
-        water_volume = mr.copyMesh(water_surface)
-
-        # Extrude the water surface by the specified depth
-        mr.addBaseToPlanarMesh(water_volume, water_depth * elevation_multiplier)
-
-        return water_volume
-
-    def _modify_elevation_for_water(self, elevation_data, water_mask, water_depth=2.0):
-        """
-        Modify elevation data directly by lowering water areas.
-
-        Args:
-            elevation_data (numpy.ndarray): 2D array of elevation values
-            water_mask (numpy.ndarray): Boolean mask indicating water areas
-            water_depth (float): How much to lower water areas (meters)
-
-        Returns:
-            numpy.ndarray: Modified elevation data with lowered water areas
-        """
-        modified_elevation = elevation_data.copy()
-
-        if np.any(water_mask):
-            # Lower the elevation in water areas
-            modified_elevation[water_mask] -= water_depth
-
-            # Ensure water areas don't go below the minimum terrain elevation
-            min_terrain_elevation = (
-                np.min(elevation_data[~water_mask])
-                if np.any(~water_mask)
-                else elevation_data.min()
-            )
-            modified_elevation[water_mask] = np.maximum(
-                modified_elevation[water_mask], min_terrain_elevation - water_depth
-            )
-
-            water_pixel_count = np.sum(water_mask)
-            output.progress_info(f"Lowered {water_pixel_count} water pixels by {water_depth}m")
-
-        return modified_elevation
-
     def _create_cutting_plane_mesh(self, bounds, water_level, base_height=1.0, elevation_multiplier=1.0, direction="up"):
         """
         Create a large horizontal plane mesh at the water level for Boolean operations.
@@ -343,7 +167,7 @@ class ModelGenerator:
             plane_solid_above = mr.copyMesh(cutting_plane_up)
             
             # Extrude the plane upward to create a solid half-space above the water level
-            extrude_depth = 100000.0  # Large depth to ensure it covers all terrain below water
+            extrude_depth = 1000000.0  # Large depth to ensure it covers all terrain below water
             mr.addBaseToPlanarMesh(plane_solid_above, extrude_depth * elevation_multiplier)
             
             # Perform Boolean difference: terrain & solid_above_water = terrain_above_water
@@ -421,9 +245,7 @@ class ModelGenerator:
                 point_x = x * scale_x
                 point_y = y * scale_y
                 # Scale elevation with realistic scaling multiplied by user multiplier
-                point_z = (
-                    elevation_data[y, x] - elevation_data.min()
-                ) * elevation_scale + base_height
+                point_z = elevation_data[y, x] * elevation_scale + base_height
                 vertices.append([point_x, point_y, point_z])
 
         # Add bottom surface vertices (flat base)
@@ -538,9 +360,6 @@ class ModelGenerator:
         
         # Setup decimate parameters
         settings = mr.DecimateSettings()
-        
-        # Decimation stop thresholds, you may specify one or both
-        settings.maxDeletedFaces = 1000000 # Number of faces to be deleted
         settings.maxError = 1 # Maximum error when decimation stops
         
         # Number of parts to simultaneous processing, greatly improves performance by cost of minor quality loss.
