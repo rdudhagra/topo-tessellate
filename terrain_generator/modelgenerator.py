@@ -359,31 +359,6 @@ class ModelGenerator:
 
         return mesh
     
-    def _decimate_mesh(self, mesh):
-        """
-        Decimate the mesh to reduce the number of faces.
-        """
-        # Repack mesh optimally.
-        # It's not necessary but highly recommended to achieve the best performance in parallel processing
-        mesh.packOptimally()
-        
-        # Setup decimate parameters
-        settings = mr.DecimateSettings()
-        settings.maxError = 1 # Maximum error when decimation stops
-        
-        # Number of parts to simultaneous processing, greatly improves performance by cost of minor quality loss.
-        # Recommended to set to number of CPU cores or more available for the best performance
-        settings.subdivideParts = os.cpu_count() * 16
-        
-        # Decimate mesh
-        result = mr.decimateMesh(mesh, settings)
-        if not result.cancelled:
-            output.info(f"Removed {result.facesDeleted} faces, {result.vertsDeleted} vertices")
-            output.info(f"Introduced error: {result.errorIntroduced}")
-            
-        else:
-            output.error(f"Failed to decimate mesh")
-
     def save_mesh(self, mesh, filename):
         """
         Save the mesh to a file.
@@ -463,12 +438,6 @@ class ModelGenerator:
         land, base = self._split_mesh_at_water_level(
             terrain, water_threshold, bounds, base_height, elevation_multiplier
         )
-
-        # Decimate the meshes
-        output.subheader("Decimating meshes")
-
-        output.progress_info("Decimating land mesh")
-        self._decimate_mesh(land)
 
         # Create result dictionary
         result = {
