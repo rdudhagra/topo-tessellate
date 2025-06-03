@@ -129,11 +129,6 @@ class ModelGenerator:
         
         output.progress_info(f"Trimming complete.")
 
-        # Pack the mesh optimally
-        output.progress_info("Packing mesh...")
-        terrain_mesh.packOptimally()
-        terrain_mesh.invalidateCaches()
-
         # Seal the newly-opened hole on the *kept* half
         output.progress_info("Sealing holes in above-water mesh...")
         hole_edges = terrain_mesh.topology.findHoleRepresentiveEdges()
@@ -141,11 +136,6 @@ class ModelGenerator:
             mr.fillContours2D(terrain_mesh, hole_edges)
 
         output.progress_info("Successfully sealed holes in above-water mesh")
-        
-        # Pack the mesh optimally
-        output.progress_info("Packing mesh...")
-        terrain_mesh.packOptimally()
-        terrain_mesh.invalidateCaches()
 
         # Create below-water mesh as a simple rectangular prism
         output.progress_info("Creating below-water rectangular prism...")
@@ -474,14 +464,11 @@ class ModelGenerator:
             terrain, water_threshold, bounds, base_height, elevation_multiplier
         )
 
-        # # Decimate the meshes
-        # output.subheader("Decimating meshes")
+        # Decimate the meshes
+        output.subheader("Decimating meshes")
 
-        # output.progress_info("Decimating land mesh")
-        # self._decimate_mesh(land)
-
-        # output.progress_info("Decimating base mesh")
-        # self._decimate_mesh(base)
+        output.progress_info("Decimating land mesh")
+        self._decimate_mesh(land)
 
         # Create result dictionary
         result = {
