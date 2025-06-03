@@ -111,43 +111,49 @@ class ModelGenerator:
         
         output.progress_info(f"Cutting plane at z = {plane_z:.2f}")
         
-        try:
-            # Create cutting plane at water level (z = plane_z)
-            cutting_plane = mr.Plane3f(mr.Vector3f(0, 0, 1), plane_z)
-            
-            # Make a copy of the original mesh for the above-water part
-            above_water_mesh = mr.copyMesh(terrain_mesh)
-            
-            # Setup trim parameters for above-water mesh (keep everything above plane)
-            trim_params_above = mr.TrimWithPlaneParams()
-            trim_params_above.plane = cutting_plane
-            # Use a small epsilon based on mesh size
-            bbox = terrain_mesh.computeBoundingBox()
-            trim_params_above.eps = 1e-6 * bbox.diagonal()
-            
-            # Trim the above-water mesh (this will keep the upper part)
-            output.progress_info("Trimming above-water mesh...")
-            mr.trimWithPlane(above_water_mesh, trim_params_above)
-            
-            # For now, let's skip the hole filling to avoid segfaults and see if basic trimming works
-            # We can add hole filling later once we confirm the basic approach works
-            
-            output.progress_info("Successfully created above-water mesh")
-            
-            # Create below-water mesh as a simple rectangular prism
-            output.progress_info("Creating below-water rectangular prism...")
-            below_water_mesh = self._create_rectangular_prism(bounds, base_height)
-            
-            output.success("Mesh splitting at water level complete!")
-            return above_water_mesh, below_water_mesh
-            
-        except Exception as e:
-            output.error(f"Error during mesh splitting: {e}")
-            # Return the original mesh and a simple base as fallback
-            output.info("Falling back to original mesh without splitting")
-            below_water_mesh = self._create_rectangular_prism(bounds, base_height)
-            return terrain_mesh, below_water_mesh
+        # Create cutting plane at water level (z = plane_z)
+        cutting_plane = mr.Plane3f(mr.Vector3f(0, 0, 1), plane_z)
+        
+        # Setup trim parameters for above-water mesh (keep everything above plane)
+        trim_params_above = mr.TrimWithPlaneParams()
+        trim_params_above.plane = cutting_plane
+        # Use a small epsilon based on mesh size
+        bbox = terrain_mesh.computeBoundingBox()
+        trim_params_above.eps = 1e-6 * bbox.diagonal()
+        
+        # Trim the above-water mesh (this will keep the upper part)
+        output.progress_info("Trimming above-water mesh...")
+        
+        # Perform the trim operation and collect cut contours
+        mr.trimWithPlane(terrain_mesh, trim_params_above)
+        
+        output.progress_info(f"Trimming complete.")
 
+        # Pack the mesh optimally
+        output.progress_info("Packing mesh...")
+        terrain_mesh.packOptimally()
+        terrain_mesh.invalidateCaches()
+
+        # Seal the newly-opened hole on the *kept* half
+        output.progress_info("Sealing holes in above-water mesh...")
+        hole_edges = terrain_mesh.topology.findHoleRepresentiveEdges()
+        if not hole_edges.empty():                     # C++ .empty() is exposed in Py
+            mr.fillContours2D(terrain_mesh, hole_edges)
+
+        output.progress_info("Successfully sealed holes in above-water mesh")
+        
+        # Pack the mesh optimally
+        output.progress_info("Packing mesh...")
+        terrain_mesh.packOptimally()
+        terrain_mesh.invalidateCaches()
+
+        # Create below-water mesh as a simple rectangular prism
+        output.progress_info("Creating below-water rectangular prism...")
+        below_water_mesh = self._create_rectangular_prism(bounds, base_height)
+        
+        output.success("Mesh splitting at water level complete!")
+        return terrain_mesh, below_water_mesh
+            
     def _create_rectangular_prism(self, bounds, height):
         """
         Create a rectangular prism mesh for the below-water base.
@@ -198,6 +204,21 @@ class ModelGenerator:
         output.progress_info(f"Created rectangular prism: {width_meters/1000:.2f} x {height_meters/1000:.2f} km x {height:.1f} m")
         
         return prism_mesh
+    
+    def _flatten_water_level(self, elevation_data, water_threshold):
+        """
+        Flatten the water level to the lowest elevation.
+        """
+        
+        # Flatten the water level to the threshold elevation
+        water_area = elevation_data < water_threshold
+        elevation_data[water_area] = water_threshold
+
+        # Raise the land level to the threshold elevation plus a bit
+        land_area = elevation_data > water_threshold
+        elevation_data[land_area] += 10
+        
+        return elevation_data
 
     def _create_mesh_from_elevation(
         self, elevation_data, bounds, base_height=1.0, elevation_multiplier=1.0
@@ -434,6 +455,10 @@ class ModelGenerator:
                 elevation_data, downsample_factor
             )
 
+        # Flatten the water level to the lowest elevation
+        output.subheader("Flattening water level")
+        terrain = self._flatten_water_level(elevation_data, water_threshold)
+
         # Create terrain mesh
         output.subheader("Creating terrain mesh")
         terrain = self._create_mesh_from_elevation(
@@ -449,14 +474,14 @@ class ModelGenerator:
             terrain, water_threshold, bounds, base_height, elevation_multiplier
         )
 
-        # Decimate the meshes
-        output.subheader("Decimating meshes")
+        # # Decimate the meshes
+        # output.subheader("Decimating meshes")
 
-        output.progress_info("Decimating land mesh")
-        self._decimate_mesh(land)
+        # output.progress_info("Decimating land mesh")
+        # self._decimate_mesh(land)
 
-        output.progress_info("Decimating base mesh")
-        self._decimate_mesh(base)
+        # output.progress_info("Decimating base mesh")
+        # self._decimate_mesh(base)
 
         # Create result dictionary
         result = {
