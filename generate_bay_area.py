@@ -10,137 +10,11 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 from terrain_generator.modelgenerator import ModelGenerator
-from terrain_generator.buildings import BuildingsExtractor
+from terrain_generator.buildingsextractor import BuildingsExtractor
 from terrain_generator.geotiff import GeoTiff
 from terrain_generator.srtm import SRTM
 from terrain_generator.console import output
-
-
-def extract_buildings(bounds):
-    """Extract 3D-ready buildings for the given bounds and create a visualization."""
-    output.header("Bay Area Buildings Extraction")
-
-    # Create buildings extractor
-    extractor = BuildingsExtractor(
-        timeout=120, use_cache=True
-    )  # Longer timeout for large area
-
-    try:
-        # Extract 3D-ready buildings
-        buildings = extractor.extract_buildings(bounds)
-
-        if not buildings:
-            output.warning("No buildings found!")
-            return []
-
-        output.success(f"Creating visualization of {len(buildings)} 3D-ready buildings")
-
-        # Create the visualization
-        create_buildings_map(buildings, bounds)
-
-        # Display statistics using the new console system
-        extractor.print_stats()
-
-        return buildings
-
-    except Exception as e:
-        output.error(f"Could not extract buildings: {e}")
-        output.info("This requires internet connection to access OpenStreetMap data")
-        return []
-
-
-def create_buildings_map(buildings, bounds):
-    """Create a map visualization of all buildings colored by height."""
-    min_lon, min_lat, max_lon, max_lat = bounds
-
-    # Create figure and axis
-    fig, ax = plt.subplots(1, 1, figsize=(16, 12))
-
-    # Get height data for color mapping
-    heights = [building.height for building in buildings]
-    min_height = min(heights)
-    max_height = max(heights)
-
-    output.info(f"Building heights range from {min_height:.1f}m to {max_height:.1f}m")
-
-    # Create colormap
-    colormap = plt.cm.viridis
-
-    # Plot each building
-    for building in buildings:
-        # Normalize height for coloring (0-1 range)
-        height_norm = (
-            (building.height - min_height) / (max_height - min_height)
-            if max_height > min_height
-            else 0
-        )
-        color = colormap(height_norm)
-
-        # Create polygon from coordinates
-        if len(building.coordinates) >= 3:
-            # Convert coordinates to numpy array
-            coords = np.array(building.coordinates)
-
-            # Create polygon patch
-            polygon = patches.Polygon(
-                coords,
-                closed=True,
-                facecolor=color,
-                edgecolor="black",
-                linewidth=0.1,
-                alpha=0.8,
-            )
-            ax.add_patch(polygon)
-
-    # Set map bounds
-    ax.set_xlim(min_lon, max_lon)
-    ax.set_ylim(min_lat, max_lat)
-
-    # Set equal aspect ratio
-    ax.set_aspect("equal")
-
-    # Add labels and title
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.set_title(
-        f"Bay Area Buildings - {len(buildings)} 3D-Ready Buildings\n"
-        f"Colored by Height ({min_height:.1f}m - {max_height:.1f}m)",
-        fontsize=14,
-        fontweight="bold",
-    )
-
-    # Add colorbar
-    sm = plt.cm.ScalarMappable(
-        cmap=colormap, norm=plt.Normalize(vmin=min_height, vmax=max_height)
-    )
-    sm.set_array([])
-    cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-    cbar.set_label("Building Height (meters)", fontsize=12)
-
-    # Add grid
-    ax.grid(True, alpha=0.3)
-
-    # Add statistics text
-    stats_text = f"""Buildings: {len(buildings)}
-Avg Height: {np.mean(heights):.1f}m
-Max Height: {max_height:.1f}m
-Total Area: {sum(b.area for b in buildings)/1_000_000:.1f} km²"""
-
-    ax.text(
-        0.02,
-        0.98,
-        stats_text,
-        transform=ax.transAxes,
-        verticalalignment="top",
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
-        fontsize=10,
-    )
-
-    # Save the image
-    output_file = "bay_area_buildings_map.png"
-    plt.tight_layout()
-    plt.savefig(output_file, dpi=300, bbox_inches="tight")
-    output.file_saved(output_file, "buildings map")
+from terrain_generator.buildingsgenerator import BuildingsGenerator
 
 
 def generate_terrain(prefix, bounds):
@@ -148,8 +22,10 @@ def generate_terrain(prefix, bounds):
     output.header("Bay Area Terrain Model Generation")
 
     # Create model generator
-    generator = ModelGenerator(GeoTiff("output_USGS10m.tif"))
-    # generator = ModelGenerator(SRTM())
+    elevation = GeoTiff("output_USGS10m.tif")
+
+    # elevation = SRTM()
+    generator = ModelGenerator(elevation)
 
     try:
         # Generate detailed terrain model
@@ -159,12 +35,21 @@ def generate_terrain(prefix, bounds):
             base_height=2500,
             water_threshold=1,
             elevation_multiplier=3.5,
-            downsample_factor=10,
+            downsample_factor=5,
         )
 
         # Save the terrain and water meshes
-        generator.save_mesh(result['land_mesh'], f"{prefix}_land.obj")
-        generator.save_mesh(result['base_mesh'], f"{prefix}_base.obj")
+        generator.save_mesh(result["land_mesh"], f"{prefix}_land.obj")
+        generator.save_mesh(result["base_mesh"], f"{prefix}_base.obj")
+
+        # Extract buildings
+        buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds)
+        buildings_generator = BuildingsGenerator(elevation)
+        buildings_mesh = buildings_generator.generate_buildings(
+            result["land_mesh"], result["elevation_data"], bounds, buildings
+        )
+
+        generator.save_mesh(buildings_mesh, f"{prefix}_buildings.obj")
 
         output.success("Bay Area terrain model generation complete!")
 
@@ -175,8 +60,10 @@ def generate_terrain(prefix, bounds):
 
 def generate_bay_area():
     """Generate both terrain and extract buildings for the Bay Area."""
-    output.header("Bay Area 3D Model Generator", 
-                 "Generating terrain and extracting buildings for the San Francisco Bay Area")
+    output.header(
+        "Bay Area 3D Model Generator",
+        "Generating terrain and extracting buildings for the San Francisco Bay Area",
+    )
 
     # Bay Area bounds (covers San Francisco to San Jose area)
     bounds = (-122.67, 37.22, -121.75, 38.18)

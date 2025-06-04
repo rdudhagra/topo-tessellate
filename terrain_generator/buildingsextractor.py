@@ -27,12 +27,11 @@ from .console import output
 class Building:
     """Represents a building extracted from OpenStreetMap with polygon and height data."""
 
-    osm_id: str
+    osm_id: int
     building_type: str
-    coordinates: List[Tuple[float, float]]  # Always has polygon data
-    tags: Dict[str, str]
-    area: float  # Always calculated from polygon
-    height: float  # Always has height data (explicit or default 5m)
+    coordinates: List[Tuple[float, float]]
+    area: float
+    height: float
 
 
 class BuildingsExtractor:
@@ -234,15 +233,17 @@ class BuildingsExtractor:
             "buildings": buildings,
             "stats": stats,
             "timestamp": time.time(),
-            "version": "3.0",  # Updated version for default height support
-            "filter_type": "default_height",  # Indicates this cache uses default heights
+            "version": "4.0",
+            "filter_type": "default_height",
             "default_height": self.DEFAULT_HEIGHT,
         }
 
         try:
             with gzip.open(cache_file, "wb") as f:
                 pickle.dump(cache_data, f, protocol=pickle.HIGHEST_PROTOCOL)
-            output.cache_info(f"Saved {len(buildings)} buildings (with default heights)", is_hit=False)
+            output.cache_info(
+                f"Saved {len(buildings)} buildings (with default heights)", is_hit=False
+            )
         except Exception as e:
             output.warning(f"Could not save cache: {e}")
 
@@ -281,7 +282,9 @@ class BuildingsExtractor:
             stats = cache_data["stats"]
             cache_age_hours = (time.time() - cache_data["timestamp"]) / 3600
 
-            output.cache_info(f"Loaded {len(buildings)} buildings (age: {cache_age_hours:.1f} hours)")
+            output.cache_info(
+                f"Loaded {len(buildings)} buildings (age: {cache_age_hours:.1f} hours)"
+            )
             return buildings, stats
 
         except Exception as e:
@@ -536,7 +539,6 @@ out geom;"""
                 osm_id=element.get("id", "unknown"),
                 building_type=building_type,
                 coordinates=coordinates,
-                tags=tags,
                 area=area,
                 height=height,
             )
@@ -556,7 +558,9 @@ out geom;"""
 
         self.buildings = buildings
 
-        output.success(f"Extracted {len(buildings)} buildings from {processed} elements")
+        output.success(
+            f"Extracted {len(buildings)} buildings from {processed} elements"
+        )
         output.info(
             f"Height data: {explicit_height_count} explicit, {default_height_count} default ({self.DEFAULT_HEIGHT}m)"
         )
@@ -617,7 +621,7 @@ out geom;"""
     def print_stats(self):
         """Print extraction statistics."""
         stats = self.get_stats()
-        
+
         if "error" in stats:
             output.error(stats["error"])
             return
@@ -626,23 +630,35 @@ out geom;"""
         output.info(f"Total buildings extracted: {stats['total_buildings']}")
         output.info(f"Buildings with area: {stats['buildings_with_area']}")
         output.info(f"Buildings with height: {stats['buildings_with_height']}")
-        
+
         output.info(f"\nHeight Information:")
         output.info(f"  Explicit height: {stats['buildings_with_explicit_height']}")
-        output.info(f"  Default height: {stats['buildings_with_default_height']} (using {stats['default_height_meters']}m)")
-        
+        output.info(
+            f"  Default height: {stats['buildings_with_default_height']} (using {stats['default_height_meters']}m)"
+        )
+
         if stats["buildings_with_height"] > 0:
             output.info(f"\nHeight Statistics:")
             output.info(f"  Average height: {stats['average_building_height_m']:.1f}m")
-            output.info(f"  Tallest building: {stats['tallest_building_height_m']:.1f}m")
-            output.info(f"  Shortest building: {stats['shortest_building_height_m']:.1f}m")
+            output.info(
+                f"  Tallest building: {stats['tallest_building_height_m']:.1f}m"
+            )
+            output.info(
+                f"  Shortest building: {stats['shortest_building_height_m']:.1f}m"
+            )
 
         if stats["buildings_with_area"] > 0:
             output.info(f"\nArea Statistics:")
-            output.info(f"  Total area: {stats['total_building_area_m2']:.0f} m² ({stats['total_building_area_m2']/1_000_000:.2f} km²)")
+            output.info(
+                f"  Total area: {stats['total_building_area_m2']:.0f} m² ({stats['total_building_area_m2']/1_000_000:.2f} km²)"
+            )
             output.info(f"  Average area: {stats['average_building_area_m2']:.0f} m²")
-            output.info(f"  Largest building: {stats['largest_building_area_m2']:.0f} m²")
-            output.info(f"  Smallest building: {stats['smallest_building_area_m2']:.0f} m²")
+            output.info(
+                f"  Largest building: {stats['largest_building_area_m2']:.0f} m²"
+            )
+            output.info(
+                f"  Smallest building: {stats['smallest_building_area_m2']:.0f} m²"
+            )
 
         # Processing statistics
         if "processed_elements" in stats:
@@ -653,11 +669,16 @@ out geom;"""
             output.info(f"    - Unwanted tags: {stats.get('excluded_tags', 0)}")
 
         # Building types
-        if "building_type_distribution" in stats and stats["building_type_distribution"]:
+        if (
+            "building_type_distribution" in stats
+            and stats["building_type_distribution"]
+        ):
             output.info(f"\nBuilding Type Distribution:")
             building_types = stats["building_type_distribution"]
             # Sort by count, show top 10
-            sorted_types = sorted(building_types.items(), key=lambda x: x[1], reverse=True)
+            sorted_types = sorted(
+                building_types.items(), key=lambda x: x[1], reverse=True
+            )
             for building_type, count in sorted_types[:10]:
                 output.info(f"  {building_type}: {count}")
             if len(sorted_types) > 10:
