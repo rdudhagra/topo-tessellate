@@ -655,7 +655,6 @@ class ModelGenerator:
                 - 'above_water_mesh': Part of terrain above water level (if split_at_water_level=True)
         """
         output.header("Terrain Model Generation", f"Bounds: {bounds}")
-        output.info(f"Water extraction: {water_threshold}")
 
         # Try to load from cache first
         if not force_refresh:
