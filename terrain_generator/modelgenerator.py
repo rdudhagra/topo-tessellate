@@ -10,6 +10,13 @@ import numpy as np
 import meshlib.mrmeshpy as mr
 import meshlib.mrmeshnumpy as mn
 from geopy.distance import geodesic
+import pickle
+import gzip
+import hashlib
+import os
+import time
+from pathlib import Path
+from typing import Optional, Dict, Tuple
 
 # Import the new console output system
 from .console import output
@@ -31,15 +38,258 @@ class ModelGenerator:
     from SRTM elevation data with proper surface normals and base structures.
     """
 
-    def __init__(self, elevation=None):
+    CACHE_DIR = "terrain_cache"
+
+    def __init__(self, elevation=None, use_cache=True, cache_max_age_days=30):
         """
         Initialize the ModelGenerator with an elevation source.
 
         Args:
             elevation (Elevation, optional): Elevation instance.
                                                    If None, creates a new one.
+            use_cache (bool): Whether to use local caching for terrain generation
+            cache_max_age_days (int): Maximum age of cached data in days
         """
         self.elevation = elevation or SRTM()
+        self.use_cache = use_cache
+        self.cache_max_age_days = cache_max_age_days
+        
+        # Create cache directory if it doesn't exist
+        if self.use_cache:
+            Path(self.CACHE_DIR).mkdir(exist_ok=True)
+
+    def _get_cache_filename(self, bounds: Tuple[float, float, float, float], 
+                           topo_dir: str, base_height: float, elevation_multiplier: float,
+                           downsample_factor: int, water_threshold: Optional[float]) -> str:
+        """Generate a cache filename based on all input parameters.
+
+        Args:
+            bounds: (min_lon, min_lat, max_lon, max_lat) bounding box
+            topo_dir: Directory containing SRTM data files
+            base_height: Height of the flat base
+            elevation_multiplier: Multiplier for elevation scaling
+            downsample_factor: Factor to downsample elevation data
+            water_threshold: Elevation below which areas are considered water
+
+        Returns:
+            Cache filename
+        """
+        # Create a string from all parameters that affect the result
+        params_str = f"{bounds[0]:.6f}_{bounds[1]:.6f}_{bounds[2]:.6f}_{bounds[3]:.6f}"
+        params_str += f"_{topo_dir}_{base_height:.2f}_{elevation_multiplier:.2f}"
+        params_str += f"_{downsample_factor}_{water_threshold}"
+        
+        # Create hash of parameters for shorter filename
+        params_hash = hashlib.md5(params_str.encode()).hexdigest()[:12]
+        
+        # Create readable filename with key parameters
+        bounds_str = f"{bounds[0]:.4f}_{bounds[1]:.4f}_{bounds[2]:.4f}_{bounds[3]:.4f}"
+        filename = f"terrain_{params_hash}_{bounds_str}_ds{downsample_factor}_wt{water_threshold}.pkl.gz"
+        
+        return os.path.join(self.CACHE_DIR, filename)
+
+    def _is_cache_valid(self, cache_file: str) -> bool:
+        """Check if the cache file is still valid.
+
+        Args:
+            cache_file: Path to cache file
+
+        Returns:
+            True if cache file exists and is within max age
+        """
+        if not os.path.exists(cache_file):
+            return False
+
+        # Check age
+        file_age = time.time() - os.path.getmtime(cache_file)
+        max_age_seconds = self.cache_max_age_days * 24 * 3600
+        
+        return file_age < max_age_seconds
+
+    def _save_to_cache(self, bounds: Tuple[float, float, float, float], 
+                       topo_dir: str, base_height: float, elevation_multiplier: float,
+                       downsample_factor: int, water_threshold: Optional[float],
+                       result: Dict) -> None:
+        """Save terrain generation result to cache.
+
+        Args:
+            bounds: Bounding box used for the query
+            topo_dir: Directory containing SRTM data files
+            base_height: Height of the flat base
+            elevation_multiplier: Multiplier for elevation scaling
+            downsample_factor: Factor to downsample elevation data
+            water_threshold: Elevation below which areas are considered water
+            result: Dictionary containing the terrain generation result
+        """
+        if not self.use_cache:
+            return
+
+        cache_file = self._get_cache_filename(bounds, topo_dir, base_height, 
+                                            elevation_multiplier, downsample_factor, 
+                                            water_threshold)
+
+        # Create base filename without extension for mesh files
+        cache_base = cache_file.replace('.pkl.gz', '')
+        land_mesh_file = f"{cache_base}_land.obj"
+        base_mesh_file = f"{cache_base}_base.obj"
+
+        try:
+            # Save meshes to separate files
+            if 'land_mesh' in result and result['land_mesh'] is not None:
+                mr.saveMesh(result['land_mesh'], land_mesh_file)
+                output.progress_info(f"Saved land mesh to {land_mesh_file}")
+            
+            if 'base_mesh' in result and result['base_mesh'] is not None:
+                mr.saveMesh(result['base_mesh'], base_mesh_file)
+                output.progress_info(f"Saved base mesh to {base_mesh_file}")
+
+            # Prepare cache data with mesh file paths instead of mesh objects
+            cache_data = {
+                "bounds": bounds,
+                "topo_dir": topo_dir,
+                "base_height": base_height,
+                "elevation_multiplier": elevation_multiplier,
+                "downsample_factor": downsample_factor,
+                "water_threshold": water_threshold,
+                "elevation_data": result.get('elevation_data'),
+                "land_mesh_file": land_mesh_file if 'land_mesh' in result else None,
+                "base_mesh_file": base_mesh_file if 'base_mesh' in result else None,
+                "timestamp": time.time(),
+                "version": "1.0"
+            }
+
+            # Save serializable data to cache
+            with gzip.open(cache_file, "wb") as f:
+                pickle.dump(cache_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+            output.cache_info("Saved terrain generation result", is_hit=False)
+            
+        except Exception as e:
+            output.warning(f"Could not save terrain cache: {e}")
+            # Clean up partial mesh files if they were created
+            for mesh_file in [land_mesh_file, base_mesh_file]:
+                if os.path.exists(mesh_file):
+                    try:
+                        os.remove(mesh_file)
+                    except:
+                        pass
+
+    def _load_from_cache(self, bounds: Tuple[float, float, float, float], 
+                         topo_dir: str, base_height: float, elevation_multiplier: float,
+                         downsample_factor: int, water_threshold: Optional[float]) -> Optional[Dict]:
+        """Load terrain generation result from cache.
+
+        Args:
+            bounds: Bounding box for the query
+            topo_dir: Directory containing SRTM data files
+            base_height: Height of the flat base
+            elevation_multiplier: Multiplier for elevation scaling
+            downsample_factor: Factor to downsample elevation data
+            water_threshold: Elevation below which areas are considered water
+
+        Returns:
+            Cached result dictionary if cache hit, None otherwise
+        """
+        if not self.use_cache:
+            return None
+
+        cache_file = self._get_cache_filename(bounds, topo_dir, base_height, 
+                                            elevation_multiplier, downsample_factor, 
+                                            water_threshold)
+
+        if not self._is_cache_valid(cache_file):
+            return None
+
+        try:
+            with gzip.open(cache_file, "rb") as f:
+                cache_data = pickle.load(f)
+
+            # Verify the parameters match
+            if (cache_data.get("bounds") != bounds or 
+                cache_data.get("topo_dir") != topo_dir or
+                cache_data.get("base_height") != base_height or
+                cache_data.get("elevation_multiplier") != elevation_multiplier or
+                cache_data.get("downsample_factor") != downsample_factor or
+                cache_data.get("water_threshold") != water_threshold):
+                output.warning("Cache parameter mismatch, ignoring cache")
+                return None
+
+            # Load meshes from separate files
+            result = {
+                'elevation_data': cache_data.get('elevation_data')
+            }
+
+            # Load land mesh if it exists
+            land_mesh_file = cache_data.get('land_mesh_file')
+            if land_mesh_file and os.path.exists(land_mesh_file):
+                try:
+                    land_mesh = mr.loadMesh(land_mesh_file)
+                    result['land_mesh'] = land_mesh
+                    output.progress_info(f"Loaded land mesh from {land_mesh_file}")
+                except Exception as e:
+                    output.warning(f"Could not load land mesh from cache: {e}")
+                    return None
+
+            # Load base mesh if it exists
+            base_mesh_file = cache_data.get('base_mesh_file')
+            if base_mesh_file and os.path.exists(base_mesh_file):
+                try:
+                    base_mesh = mr.loadMesh(base_mesh_file)
+                    result['base_mesh'] = base_mesh
+                    output.progress_info(f"Loaded base mesh from {base_mesh_file}")
+                except Exception as e:
+                    output.warning(f"Could not load base mesh from cache: {e}")
+                    return None
+
+            cache_age_hours = (time.time() - cache_data["timestamp"]) / 3600
+            output.cache_info(f"Loaded terrain generation result (age: {cache_age_hours:.1f} hours)")
+            
+            return result
+
+        except Exception as e:
+            output.warning(f"Could not load terrain cache: {e}")
+            return None
+
+    def clear_cache(self, bounds: Optional[Tuple[float, float, float, float]] = None) -> None:
+        """Clear cached terrain data.
+
+        Args:
+            bounds: If provided, clear only cache for these bounds. Otherwise clear all cache.
+        """
+        if bounds is not None:
+            # This is more complex since we don't know all the other parameters
+            # For now, clear all cache files that match the bounds
+            cache_dir = Path(self.CACHE_DIR)
+            if cache_dir.exists():
+                bounds_str = f"{bounds[0]:.4f}_{bounds[1]:.4f}_{bounds[2]:.4f}_{bounds[3]:.4f}"
+                
+                # Clear pickle cache files
+                cache_files = list(cache_dir.glob(f"terrain_*_{bounds_str}_*.pkl.gz"))
+                
+                # Clear associated mesh files  
+                mesh_files = list(cache_dir.glob(f"terrain_*_{bounds_str}_*_land.obj"))
+                mesh_files.extend(list(cache_dir.glob(f"terrain_*_{bounds_str}_*_base.obj")))
+                
+                total_files = cache_files + mesh_files
+                for cache_file in total_files:
+                    cache_file.unlink()
+                    
+                output.success(f"Cleared {len(total_files)} cache files ({len(cache_files)} pickle, {len(mesh_files)} mesh) for bounds {bounds}")
+        else:
+            # Clear all cache files
+            cache_dir = Path(self.CACHE_DIR)
+            if cache_dir.exists():
+                # Clear pickle cache files
+                cache_files = list(cache_dir.glob("terrain_*.pkl.gz"))
+                
+                # Clear mesh files
+                mesh_files = list(cache_dir.glob("terrain_*_land.obj"))
+                mesh_files.extend(list(cache_dir.glob("terrain_*_base.obj")))
+                
+                total_files = cache_files + mesh_files
+                for cache_file in total_files:
+                    cache_file.unlink()
+                    
+                output.success(f"Cleared {len(total_files)} terrain cache files ({len(cache_files)} pickle, {len(mesh_files)} mesh)")
 
     def _calculate_bounds_dimensions_meters(self, bounds):
         """
@@ -381,6 +631,7 @@ class ModelGenerator:
         elevation_multiplier=1.0,
         downsample_factor=10,
         water_threshold=None,
+        force_refresh=False,
     ):
         """
         Generate a 3D terrain model from SRTM elevation data.
@@ -391,8 +642,8 @@ class ModelGenerator:
             base_height (float): Height of the flat base
             elevation_multiplier (float): Multiplier for realistic elevation scaling (1.0 = realistic scale)
             downsample_factor (int): Factor to downsample elevation data (default: 10)
-            output_prefix (str): Prefix for output filename
             water_threshold (float, optional): Elevation below which areas are considered water
+            force_refresh (bool): If True, ignore cache and generate fresh data
 
         Returns:
             dict: Dictionary containing generated meshes and data:
@@ -405,6 +656,14 @@ class ModelGenerator:
         """
         output.header("Terrain Model Generation", f"Bounds: {bounds}")
         output.info(f"Water extraction: {water_threshold}")
+
+        # Try to load from cache first
+        if not force_refresh:
+            cached_result = self._load_from_cache(bounds, topo_dir, base_height, 
+                                                elevation_multiplier, downsample_factor, 
+                                                water_threshold)
+            if cached_result is not None:
+                return cached_result
 
         # Get elevation data from SRTM
         output.subheader("Loading elevation data")
@@ -445,6 +704,10 @@ class ModelGenerator:
             'land_mesh': land,
             'base_mesh': base
         }
+
+        # Save to cache
+        self._save_to_cache(bounds, topo_dir, base_height, elevation_multiplier,
+                           downsample_factor, water_threshold, result)
 
         output.success("Terrain model generation complete!")
 
