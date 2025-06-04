@@ -62,8 +62,8 @@ class Elevation:
         width_meters = geodesic(ref_point, (min_lat, max_lon)).meters
         height_meters = geodesic(ref_point, (max_lat, min_lon)).meters
 
-        x_index = int(x_meters / width_meters * elevation_data.shape[1])
-        y_index = int(y_meters / height_meters * elevation_data.shape[0])
+        x_index = x_meters / width_meters * elevation_data.shape[1]
+        y_index = y_meters / height_meters * elevation_data.shape[0]
 
         return x_index, y_index
 
