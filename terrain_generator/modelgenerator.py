@@ -291,30 +291,6 @@ class ModelGenerator:
                     
                 output.success(f"Cleared {len(total_files)} terrain cache files ({len(cache_files)} pickle, {len(mesh_files)} mesh)")
 
-    def _calculate_bounds_dimensions_meters(self, bounds):
-        """
-        Calculate the real-world dimensions of geographic bounds in meters using geopy.
-
-        Args:
-            bounds (tuple): (min_lon, min_lat, max_lon, max_lat)
-
-        Returns:
-            tuple: (width_meters, height_meters)
-        """
-        min_lon, min_lat, max_lon, max_lat = bounds
-
-        # Calculate width (longitude difference) in meters
-        # Use center latitude for calculation
-        center_lat = (min_lat + max_lat) / 2
-        width_meters = geodesic((center_lat, min_lon), (center_lat, max_lon)).meters
-
-        # Calculate height (latitude difference) in meters
-        # Use center longitude for calculation
-        center_lon = (min_lon + max_lon) / 2
-        height_meters = geodesic((min_lat, center_lon), (max_lat, center_lon)).meters
-
-        return width_meters, height_meters
-
     def _downsample_elevation_data(self, elevation_data, downsample_factor=10):
         """
         Downsample elevation data for faster processing.
@@ -406,7 +382,7 @@ class ModelGenerator:
             meshlib.mrmeshpy.Mesh: Rectangular prism mesh
         """
         # Calculate real-world dimensions
-        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
+        width_meters, height_meters = self.elevation.calculate_bounds_dimensions_meters(bounds)
         
         # Create vertices for a rectangular prism
         # Bottom face (z = 0)
@@ -478,7 +454,7 @@ class ModelGenerator:
         height, width = elevation_data.shape
 
         # Calculate real-world dimensions of the bounds
-        width_meters, height_meters = self._calculate_bounds_dimensions_meters(bounds)
+        width_meters, height_meters = self.elevation.calculate_bounds_dimensions_meters(bounds)
 
         # Calculate scale factor to fit real-world dimensions to grid
         # This makes 1 grid unit = actual meters in the real world

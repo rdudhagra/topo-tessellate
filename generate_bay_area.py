@@ -28,13 +28,15 @@ def generate_terrain(prefix, bounds):
     generator = ModelGenerator(elevation)
 
     try:
+        elevation_multiplier = 3.5
+
         # Generate detailed terrain model
         result = generator.generate_terrain_model(
             bounds=bounds,
             topo_dir="topo",
             base_height=2500,
             water_threshold=1,
-            elevation_multiplier=3.5,
+            elevation_multiplier=elevation_multiplier,
             downsample_factor=3,
         )
 
@@ -46,7 +48,11 @@ def generate_terrain(prefix, bounds):
         buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds)
         buildings_generator = BuildingsGenerator(elevation)
         buildings_mesh = buildings_generator.generate_buildings(
-            result["land_mesh"], result["elevation_data"], bounds, buildings
+            result["land_mesh"],
+            result["elevation_data"],
+            elevation_multiplier,
+            bounds,
+            buildings,
         )
 
         generator.save_mesh(buildings_mesh, f"{prefix}_buildings.obj")

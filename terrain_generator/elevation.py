@@ -6,6 +6,7 @@ from typing import Union
 # Import the new console output system
 from .console import output
 
+
 class Elevation:
     def __init__(self):
         pass
@@ -14,7 +15,12 @@ class Elevation:
     def get_elevation(self, bounds, topo_dir="topo"):
         pass
 
-    def get_model_coordinates(self, elevation_data, bounds, coords: Union[tuple[float, float], list[tuple[float, float]]]) -> tuple[int, int]:
+    def get_model_coordinates(
+        self,
+        elevation_data,
+        bounds,
+        coords: Union[tuple[float, float], list[tuple[float, float]]],
+    ) -> tuple[int, int]:
         """
         Convert geographic coordinates to model coordinates
 
@@ -39,7 +45,9 @@ class Elevation:
 
         return indices
 
-    def _get_model_coordinates(self, elevation_data, bounds, coord: tuple[float, float]) -> tuple[int, int]:
+    def _get_model_coordinates(
+        self, elevation_data, bounds, coord: tuple[float, float]
+    ) -> tuple[int, int]:
         """
         Convert a single geographic coordinate to model coordinates
 
@@ -59,15 +67,32 @@ class Elevation:
         x_meters = geodesic(ref_point, (min_lat, lon)).meters
         y_meters = geodesic(ref_point, (lat, min_lon)).meters
 
-        width_meters = geodesic(ref_point, (min_lat, max_lon)).meters
-        height_meters = geodesic(ref_point, (max_lat, min_lon)).meters
+        return x_meters, y_meters
 
-        x_index = x_meters / width_meters * elevation_data.shape[1]
-        y_index = y_meters / height_meters * elevation_data.shape[0]
+    def calculate_bounds_dimensions_meters(self, bounds):
+        """
+        Calculate the real-world dimensions of geographic bounds in meters using geopy.
 
-        return x_index, y_index
+        Args:
+            bounds (tuple): (min_lon, min_lat, max_lon, max_lat)
 
-    
+        Returns:
+            tuple: (width_meters, height_meters)
+        """
+        min_lon, min_lat, max_lon, max_lat = bounds
+
+        # Calculate width (longitude difference) in meters
+        # Use center latitude for calculation
+        center_lat = (min_lat + max_lat) / 2
+        width_meters = geodesic((center_lat, min_lon), (center_lat, max_lon)).meters
+
+        # Calculate height (latitude difference) in meters
+        # Use center longitude for calculation
+        center_lon = (min_lon + max_lon) / 2
+        height_meters = geodesic((min_lat, center_lon), (max_lat, center_lon)).meters
+
+        return width_meters, height_meters
+
     def _crop_elevation_data(self, elevation_data, bounds):
         """
         Crop the elevation data to the given bounds
@@ -121,7 +146,9 @@ class Elevation:
         output.info(
             f"    SRTM bounds: lat {srtm_min_lat}-{srtm_max_lat}, lon {srtm_min_lon}-{srtm_max_lon}"
         )
-        output.info(f"    Crop bounds: lat {min_lat}-{max_lat}, lon {min_lon}-{max_lon}")
+        output.info(
+            f"    Crop bounds: lat {min_lat}-{max_lat}, lon {min_lon}-{max_lon}"
+        )
         output.info(
             f"    SRTM extent: {(srtm_max_x-srtm_min_x)/1000:.2f} km x {(srtm_max_y-srtm_min_y)/1000:.2f} km"
         )
