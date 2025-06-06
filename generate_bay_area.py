@@ -6,9 +6,7 @@ This script generates a 3D terrain model of the Bay Area using SRTM elevation da
 and extracts 3D-ready building data from OpenStreetMap.
 """
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import numpy as np
+import meshlib.mrmeshpy as mr
 from terrain_generator.modelgenerator import ModelGenerator
 from terrain_generator.buildingsextractor import BuildingsExtractor
 from terrain_generator.geotiff import GeoTiff
@@ -29,32 +27,34 @@ def generate_terrain(prefix, bounds):
 
     try:
         elevation_multiplier = 3.5
+        base_height = 2500
 
         # Generate detailed terrain model
         result = generator.generate_terrain_model(
             bounds=bounds,
             topo_dir="topo",
-            base_height=2500,
+            base_height=base_height,
             water_threshold=1,
             elevation_multiplier=elevation_multiplier,
             downsample_factor=3,
         )
 
-        # Save the terrain and water meshes
-        generator.save_mesh(result["land_mesh"], f"{prefix}_land.obj")
-        generator.save_mesh(result["base_mesh"], f"{prefix}_base.obj")
-
         # Extract buildings
         buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds)
         buildings_generator = BuildingsGenerator(elevation)
         buildings_mesh = buildings_generator.generate_buildings(
-            result["land_mesh"],
+            base_height,
             result["elevation_data"],
             elevation_multiplier,
             bounds,
             buildings,
+            min_building_height=250,
         )
 
+        # Save meshes
+        output.progress_info(f"Saving meshes...")
+        generator.save_mesh(result["land_mesh"], f"{prefix}_land.obj")
+        generator.save_mesh(result["base_mesh"], f"{prefix}_base.obj")
         generator.save_mesh(buildings_mesh, f"{prefix}_buildings.obj")
 
         output.success("Bay Area terrain model generation complete!")
