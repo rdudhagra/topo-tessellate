@@ -77,8 +77,8 @@ class BuildingsGenerator:
                 ):
                     continue
 
-                # Compute the average elevation of the building's foundation
-                foundation_elevation = np.mean(
+                # Compute the minimum elevation of the building's foundation
+                foundation_elevation = np.min(
                     [elevation_data[p[1], p[0]] for p in points_indices]
                 )
 

@@ -233,7 +233,7 @@ class BuildingsExtractor:
             "buildings": buildings,
             "stats": stats,
             "timestamp": time.time(),
-            "version": "4.0",
+            "version": "5.0",
             "filter_type": "default_height",
             "default_height": self.DEFAULT_HEIGHT,
         }
@@ -329,10 +329,7 @@ class BuildingsExtractor:
         query = f"""[out:json][timeout:{self.timeout}];
 (
   way["building"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["amenity"~"^(hospital|school|university|library|fire_station|police|courthouse|embassy|cinema|theatre|museum|town_hall|community_centre)$"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["leisure"~"^(sports_centre|stadium|swimming_pool|fitness_centre)$"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["shop"~"^(supermarket|mall|department_store)$"]({min_lat},{min_lon},{max_lat},{max_lon});
-  way["tourism"~"^(hotel|hostel|motel|guest_house|attraction|museum)$"]({min_lat},{min_lon},{max_lat},{max_lon});
+  relation["building"]["type"="multipolygon"]({min_lat},{min_lon},{max_lat},{max_lon});
 );
 out geom;"""
         return query

@@ -48,7 +48,7 @@ def generate_terrain(prefix, bounds):
             elevation_multiplier,
             bounds,
             buildings,
-            min_building_height=250,
+            min_building_height=100,
         )
 
         # Save meshes
