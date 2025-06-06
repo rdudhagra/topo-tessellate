@@ -30,8 +30,6 @@ class BuildingsGenerator:
             buildings (list[Building]): The buildings to generate
             min_building_height (float, optional): The minimum height of a building. Defaults to 25.
         """
-        # buildings = list(filter(lambda b: b.osm_id == 431972186, buildings))
-        buildings = buildings[:100000]
 
         width_meters, height_meters = self.elevation.calculate_bounds_dimensions_meters(
             bounds
