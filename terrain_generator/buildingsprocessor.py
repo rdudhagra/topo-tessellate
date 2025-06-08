@@ -168,7 +168,7 @@ class BuildingsProcessor:
         return self.buildings
 
     def cluster_and_merge_buildings(
-        self, max_building_distance_meters: float = 25
+        self, max_building_distance_meters: float = 35
     ) -> list[list[Building]]:
         """Cluster buildings into groups based on their distance from each other.
         Then, combine the polygons of the buildings in each group into a single polygon.
@@ -206,8 +206,6 @@ class BuildingsProcessor:
 
             # Remove duplicates
             building_wrappers_in_cluster = list(set(building_wrappers_in_cluster))
-            if len(building_wrappers_in_cluster) > 1:
-                output.info(f"Cluster of {len(building_wrappers_in_cluster)} buildings found")
 
             # Combine the polygons of the buildings in the cluster into a single polygon
             new_buildings.extend(
