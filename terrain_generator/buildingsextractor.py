@@ -38,6 +38,10 @@ class Building:
         """Check if the building is inside the given bbox."""
         min_lon, min_lat, max_lon, max_lat = bbox
 
+        # Validate bbox: min values should be less than max values
+        if min_lon >= max_lon or min_lat >= max_lat:
+            return False
+
         return Polygon(
             [
                 (min_lon, min_lat),
