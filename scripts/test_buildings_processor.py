@@ -259,7 +259,7 @@ class BuildingsProcessorTest:
                 
                 output.info(f"  Total buildings in bins: {total_buildings_in_bins}")
                 output.info(f"  Number of bins: {len(geo_bins.bins)}")
-                output.info(f"  Centroid: ({geo_bins.centroid_lat:.6f}, {geo_bins.centroid_lon:.6f})")
+                output.info(f"  Min: ({geo_bins.min_lat:.6f}, {geo_bins.min_lon:.6f})")
                 
                 # Note: total_buildings_in_bins can be > len(buildings) because buildings can span multiple bins
                 if total_buildings_in_bins >= len(buildings):

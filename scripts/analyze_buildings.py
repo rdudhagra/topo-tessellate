@@ -47,8 +47,6 @@ class BuildingAnalyzer:
         self.buildings: List[Building] = []
         self.cache_metadata: Dict[str, Any] = {}
         self.filtered_buildings: List[Building] = []
-
-        self.processor = BuildingsProcessor()
         
         self._load_cache()
     
@@ -93,7 +91,8 @@ class BuildingAnalyzer:
         """        
         output.progress_info(f"Filtering buildings by bbox: {bbox}")
         
-        self.filtered_buildings = self.processor.exclude_buildings_outside_bbox(self.buildings, bbox)
+        self.processor = BuildingsProcessor(self.buildings)
+        self.filtered_buildings = self.processor.exclude_buildings_outside_bbox(bbox)
 
         output.success(f"Filtered to {len(self.filtered_buildings)} buildings within bbox")
     
@@ -420,6 +419,12 @@ class BuildingAnalyzer:
         for building in buildings:
             # Use centroid of building
             coords = np.array(building.polygon.exterior.coords)
+
+            if len(coords) == 0:
+                # Print the building
+                output.error(f"Building {building.osm_id} has no coordinates")
+                continue
+
             centroid = np.mean(coords, axis=0)
             all_coords.append(centroid)
             building_data.append({
@@ -600,6 +605,10 @@ class BuildingAnalyzer:
             output.info(f"Analyzing buildings within bounding box: {bbox}")
         else:
             output.info("Analyzing all buildings in cache")
+
+        # Cluster and merge buildings
+        output.progress_info("Clustering and merging buildings...")
+        self.filtered_buildings = self.processor.cluster_and_merge_buildings()
         
         buildings = self.get_analysis_buildings()
         if not buildings:
@@ -720,9 +729,7 @@ Examples:
     except KeyboardInterrupt:
         output.warning("\nAnalysis interrupted by user")
         sys.exit(1)
-    except Exception as e:
-        output.error(f"Analysis failed: {e}")
-        sys.exit(1)
+
 
 
 if __name__ == "__main__":

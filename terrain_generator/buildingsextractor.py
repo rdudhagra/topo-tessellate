@@ -50,6 +50,9 @@ class Building:
                 (min_lon, max_lat),
             ]
         ).contains(self.polygon)
+    
+    def __hash__(self):
+        return hash((self.osm_id, self.polygon.wkt))
 
 
 class BuildingsExtractor:
