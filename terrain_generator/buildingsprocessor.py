@@ -7,16 +7,20 @@ from shapely import unary_union
 import random
 from collections import defaultdict
 
+
 class BuildingCoordinatesWrapper:
     """A wrapper for a building's coordinates."""
+
     def __init__(self, building: Building, ref_lat: float, ref_lon: float):
         self.building = building
         self.ref_lat = ref_lat
         self.ref_lon = ref_lon
-        
+
         # Pre-calculate bounds for performance
         minlon, minlat, _, _ = building.polygon.bounds
-        assert ref_lat <= minlat and ref_lon <= minlon, "Reference lat/lon must be less than the building's min lat/lon"
+        assert (
+            ref_lat <= minlat and ref_lon <= minlon
+        ), "Reference lat/lon must be less than the building's min lat/lon"
 
         geodesic_poly = []
         for coord in building.polygon.exterior.coords:
@@ -40,7 +44,10 @@ class BuildingCoordinatesWrapper:
         return hash((self.building.osm_id, self.geodesic_polygon.wkt))
 
     def __eq__(self, other):
-        return self.building.osm_id == other.building.osm_id and self.geodesic_polygon == other.geodesic_polygon
+        return (
+            self.building.osm_id == other.building.osm_id
+            and self.geodesic_polygon == other.geodesic_polygon
+        )
 
 
 class BuildingsGeoBins:
@@ -60,7 +67,9 @@ class BuildingsGeoBins:
     ):
         self.buildings = buildings
         self.bin_size_meters = bin_size_meters
-        self.bins: dict[tuple[int, int], list[BuildingCoordinatesWrapper]] = defaultdict(list)
+        self.bins: dict[tuple[int, int], list[BuildingCoordinatesWrapper]] = (
+            defaultdict(list)
+        )
         self.debug = debug
         self.min_lat, self.min_lon = self.get_buildings_min()
         self.build_bins()
@@ -68,14 +77,14 @@ class BuildingsGeoBins:
     def get_buildings_min(self):
         """Get the minimum latitude and longitude of all the buildings to use a reference for geodesic calculations."""
         # Optimized to compute min values in a single pass
-        min_lat = float('inf')
-        min_lon = float('inf')
-        
+        min_lat = float("inf")
+        min_lon = float("inf")
+
         for building in self.buildings:
             bounds = building.polygon.bounds
             min_lon = min(min_lon, bounds[0])
             min_lat = min(min_lat, bounds[1])
-        
+
         return min_lat, min_lon
 
     def add_building(self, building: Building | BuildingCoordinatesWrapper):
@@ -83,7 +92,9 @@ class BuildingsGeoBins:
         if isinstance(building, BuildingCoordinatesWrapper):
             building_wrapper = building
         else:
-            building_wrapper = BuildingCoordinatesWrapper(building, self.min_lat, self.min_lon)
+            building_wrapper = BuildingCoordinatesWrapper(
+                building, self.min_lat, self.min_lon
+            )
 
         minx, miny, maxx, maxy = building_wrapper.geodesic_polygon.bounds
 
@@ -100,7 +111,9 @@ class BuildingsGeoBins:
         if isinstance(building, BuildingCoordinatesWrapper):
             building_wrapper = building
         else:
-            building_wrapper = BuildingCoordinatesWrapper(building, self.min_lat, self.min_lon)
+            building_wrapper = BuildingCoordinatesWrapper(
+                building, self.min_lat, self.min_lon
+            )
 
         minx, miny, maxx, maxy = building_wrapper.geodesic_polygon.bounds
 
@@ -187,25 +200,32 @@ class BuildingsProcessor:
         """Cluster buildings into groups based on their distance from each other.
         Then, combine the polygons of the buildings in each group into a single polygon.
         """
+        output.info(f"Clustering and merging {len(self.buildings)} buildings...")
+
         # Create a geobins object
         geo_bins = BuildingsGeoBins(self.buildings)
 
         # List of new buildings to return
         new_buildings = []
+        last_update_printout_number = 0
 
         # Cache keys list to avoid repeated conversion
         bin_keys = list(geo_bins.bins.keys())
 
         while geo_bins:
+            if len(new_buildings) > last_update_printout_number:
+                output.info(f"Processed {len(new_buildings)}/{len(self.buildings)} buildings...")
+                last_update_printout_number += 1000
+
             # Pick a random building from the bins - use cached keys
             if not bin_keys:
                 bin_keys = list(geo_bins.bins.keys())
-            
+
             bin_key = random.choice(bin_keys)
             if bin_key not in geo_bins.bins:  # Key might have been removed
                 bin_keys.remove(bin_key)
                 continue
-                
+
             building_wrapper = random.choice(geo_bins.bins[bin_key])
 
             building_wrappers_in_cluster = {building_wrapper}
@@ -217,19 +237,21 @@ class BuildingsProcessor:
             while building_wrappers_query_queue:
                 building_wrapper = building_wrappers_query_queue.pop(0)
 
-                building_wrappers_in_radius = geo_bins.get_building_wrappers_within_radius(
-                    building_wrapper.centroid.x,  # Use cached centroid
-                    building_wrapper.centroid.y,
-                    max_building_distance_meters,
+                building_wrappers_in_radius = (
+                    geo_bins.get_building_wrappers_within_radius(
+                        building_wrapper.centroid.x,  # Use cached centroid
+                        building_wrapper.centroid.y,
+                        max_building_distance_meters,
+                    )
                 )
-                
+
                 new_wrappers = []
                 for wrapper in building_wrappers_in_radius:
                     if wrapper not in building_wrappers_in_cluster:
                         building_wrappers_in_cluster.add(wrapper)
                         new_wrappers.append(wrapper)
                         geo_bins.remove_building(wrapper)
-                
+
                 building_wrappers_query_queue.extend(new_wrappers)
 
             # Convert set back to list for merge_buildings
@@ -252,7 +274,9 @@ class BuildingsProcessor:
     ) -> list[Building]:
         """Merge buildings into a single polygon. If the result is a MultiPolygon, return a list of buildings."""
         # Get all the polygons from the buildings
-        geodesic_polys: list[Polygon] = [building_wrapper.geodesic_polygon for building_wrapper in building_wrappers]
+        geodesic_polys: list[Polygon] = [
+            building_wrapper.geodesic_polygon for building_wrapper in building_wrappers
+        ]
 
         grown = [
             p.buffer(+max_building_distance_meters) for p in geodesic_polys
@@ -271,7 +295,7 @@ class BuildingsProcessor:
 
         # Convert the polygon back to lat/lon coordinates
         new_buildings: list[Building] = []
-        
+
         for result in results:
             lat_lon_poly = []
             for coord in result.exterior.coords:
@@ -285,15 +309,24 @@ class BuildingsProcessor:
             new_poly = Polygon(lat_lon_poly)
 
             # Cache max height calculation
-            max_height = max(building_wrapper.building.height for building_wrapper in building_wrappers)
-            
-            new_buildings.append(
-                Building(
-                    polygon=new_poly,
-                    height=max_height,
-                    building_type=building_wrappers[0].building.building_type,
-                    osm_id=building_wrappers[0].building.osm_id,
-                    area=new_poly.area,
-                )
+            max_height = max(
+                building_wrapper.building.height
+                for building_wrapper in building_wrappers
             )
+
+            new_building = Building(
+                polygon=new_poly,
+                height=max_height,
+                building_type=building_wrappers[0].building.building_type,
+                osm_id=building_wrappers[0].building.osm_id,
+                area=new_poly.area,
+            )
+            new_building_wrapper = BuildingCoordinatesWrapper(
+                new_building,
+                new_building.polygon.bounds[1],
+                new_building.polygon.bounds[0],
+            )
+            new_building.area = new_building_wrapper.geodesic_polygon.area
+
+            new_buildings.append(new_building)
         return new_buildings
