@@ -406,87 +406,158 @@ class BuildingAnalyzer:
         return str(filename)
     
     def create_spatial_plot(self) -> str:
-        """Create a spatial visualization of buildings."""
+        """Create a spatial visualization of buildings showing actual polygons."""
         buildings = self.get_analysis_buildings()
         
         if not buildings:
             return None
         
-        # Extract all coordinates
-        all_coords = []
+        # Extract building polygons and data
+        building_polygons = []
         building_data = []
+        all_coords = []
         
         for building in buildings:
-            # Use centroid of building
-            coords = np.array(building.polygon.exterior.coords)
-
-            if len(coords) == 0:
-                # Print the building
-                output.error(f"Building {building.osm_id} has no coordinates")
+            try:
+                coords = np.array(building.polygon.exterior.coords)
+                
+                if len(coords) == 0:
+                    output.error(f"Building {building.osm_id} has no coordinates")
+                    continue
+                
+                # Store polygon coordinates and building data
+                building_polygons.append(coords)
+                building_data.append({
+                    'coords': coords,
+                    'height': building.height,
+                    'area': building.area,
+                    'type': building.building_type
+                })
+                
+                # Collect all coordinates for bounds calculation
+                all_coords.extend(coords)
+                
+            except Exception as e:
+                output.error(f"Error processing building {building.osm_id}: {e}")
                 continue
-
-            centroid = np.mean(coords, axis=0)
-            all_coords.append(centroid)
-            building_data.append({
-                'lon': centroid[0],
-                'lat': centroid[1],
-                'height': building.height,
-                'area': building.area,
-                'type': building.building_type
-            })
         
-        if not all_coords:
+        if not building_polygons:
             return None
         
-        lons, lats = zip(*all_coords)
+        # Calculate bounds for consistent axes
+        all_lons, all_lats = zip(*all_coords)
+        lon_min, lon_max = min(all_lons), max(all_lons)
+        lat_min, lat_max = min(all_lats), max(all_lats)
         
-        plt.figure(figsize=(15, 10))
+        plt.figure(figsize=(16, 12))
         
-        # Building locations colored by height
-        plt.subplot(2, 2, 1)
+        # Building polygons colored by height
+        ax1 = plt.subplot(2, 2, 1)
         heights = [bd['height'] for bd in building_data]
-        scatter = plt.scatter(lons, lats, c=heights, cmap='viridis', s=1, alpha=0.6)
-        plt.colorbar(scatter, label='Height (m)')
-        plt.xlabel('Longitude')
-        plt.ylabel('Latitude')
-        plt.title('Building Locations by Height')
-        plt.grid(True, alpha=0.3)
+        height_min, height_max = min(heights), max(heights)
         
-        # Building locations colored by area
-        plt.subplot(2, 2, 2)
+        for i, bd in enumerate(building_data):
+            if len(bd['coords']) >= 3:  # Valid polygon needs at least 3 points
+                # Normalize height for colormap
+                norm_height = (bd['height'] - height_min) / (height_max - height_min) if height_max > height_min else 0
+                color = plt.cm.viridis(norm_height)
+                
+                polygon = mpatches.Polygon(bd['coords'], closed=True, 
+                                         facecolor=color, edgecolor='black', 
+                                         linewidth=0.1, alpha=0.7)
+                ax1.add_patch(polygon)
+        
+        ax1.set_xlim(lon_min, lon_max)
+        ax1.set_ylim(lat_min, lat_max)
+        ax1.set_xlabel('Longitude')
+        ax1.set_ylabel('Latitude')
+        ax1.set_title('Building Polygons by Height')
+        ax1.grid(True, alpha=0.3)
+        
+        # Add colorbar for height
+        if height_max > height_min:
+            sm = plt.cm.ScalarMappable(cmap='viridis', norm=plt.Normalize(vmin=height_min, vmax=height_max))
+            sm.set_array([])
+            plt.colorbar(sm, ax=ax1, label='Height (m)')
+        
+        # Building polygons colored by area
+        ax2 = plt.subplot(2, 2, 2)
         areas = [bd['area'] for bd in building_data]
-        scatter = plt.scatter(lons, lats, c=areas, cmap='plasma', s=1, alpha=0.6)
-        plt.colorbar(scatter, label='Area (m²)')
-        plt.xlabel('Longitude')
-        plt.ylabel('Latitude')
-        plt.title('Building Locations by Area')
-        plt.grid(True, alpha=0.3)
+        area_min, area_max = min(areas), max(areas)
         
-        # Building density heatmap
-        plt.subplot(2, 2, 3)
-        plt.hist2d(lons, lats, bins=50, cmap='Blues')
-        plt.colorbar(label='Building Count')
-        plt.xlabel('Longitude')
-        plt.ylabel('Latitude')
-        plt.title('Building Density Heatmap')
+        for i, bd in enumerate(building_data):
+            if len(bd['coords']) >= 3:
+                # Normalize area for colormap (use log scale for better visualization)
+                log_area = np.log(bd['area']) if bd['area'] > 0 else 0
+                log_area_min = np.log(area_min) if area_min > 0 else 0
+                log_area_max = np.log(area_max) if area_max > 0 else 0
+                
+                if log_area_max > log_area_min:
+                    norm_area = (log_area - log_area_min) / (log_area_max - log_area_min)
+                else:
+                    norm_area = 0
+                    
+                color = plt.cm.plasma(norm_area)
+                
+                polygon = mpatches.Polygon(bd['coords'], closed=True,
+                                         facecolor=color, edgecolor='black',
+                                         linewidth=0.1, alpha=0.7)
+                ax2.add_patch(polygon)
         
-        # Building locations by type (top 5 types)
-        plt.subplot(2, 2, 4)
+        ax2.set_xlim(lon_min, lon_max)
+        ax2.set_ylim(lat_min, lat_max)
+        ax2.set_xlabel('Longitude')
+        ax2.set_ylabel('Latitude')
+        ax2.set_title('Building Polygons by Area')
+        ax2.grid(True, alpha=0.3)
+        
+        # Add colorbar for area
+        if area_max > area_min:
+            sm_area = plt.cm.ScalarMappable(cmap='plasma', norm=plt.Normalize(vmin=area_min, vmax=area_max))
+            sm_area.set_array([])
+            plt.colorbar(sm_area, ax=ax2, label='Area (m²)')
+        
+        # Building density heatmap (using centroids)
+        ax3 = plt.subplot(2, 2, 3)
+        centroids = [np.mean(bd['coords'], axis=0) for bd in building_data if len(bd['coords']) > 0]
+        if centroids:
+            centroid_lons, centroid_lats = zip(*centroids)
+            h = ax3.hist2d(centroid_lons, centroid_lats, bins=50, cmap='Blues')
+            plt.colorbar(h[3], ax=ax3, label='Building Count')
+        ax3.set_xlim(lon_min, lon_max)
+        ax3.set_ylim(lat_min, lat_max)
+        ax3.set_xlabel('Longitude')
+        ax3.set_ylabel('Latitude')
+        ax3.set_title('Building Density Heatmap')
+        
+        # Building polygons by type (top 5 types)
+        ax4 = plt.subplot(2, 2, 4)
         type_counts = Counter(bd['type'] for bd in building_data)
         top_5_types = [t for t, _ in type_counts.most_common(5)]
         
         colors = ['red', 'blue', 'green', 'orange', 'purple']
-        for i, building_type in enumerate(top_5_types):
-            type_coords = [(bd['lon'], bd['lat']) for bd in building_data if bd['type'] == building_type]
-            if type_coords:
-                type_lons, type_lats = zip(*type_coords)
-                plt.scatter(type_lons, type_lats, c=colors[i], label=building_type[:15], s=1, alpha=0.6)
         
-        plt.xlabel('Longitude')
-        plt.ylabel('Latitude')
-        plt.title('Building Locations by Type (Top 5)')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
+        for i, building_type in enumerate(top_5_types):
+            type_buildings = [bd for bd in building_data if bd['type'] == building_type]
+            
+            for bd in type_buildings:
+                if len(bd['coords']) >= 3:
+                    polygon = mpatches.Polygon(bd['coords'], closed=True,
+                                             facecolor=colors[i], edgecolor='black',
+                                             linewidth=0.1, alpha=0.6)
+                    ax4.add_patch(polygon)
+        
+        ax4.set_xlim(lon_min, lon_max)
+        ax4.set_ylim(lat_min, lat_max)
+        ax4.set_xlabel('Longitude')
+        ax4.set_ylabel('Latitude')
+        ax4.set_title('Building Polygons by Type (Top 5)')
+        ax4.grid(True, alpha=0.3)
+        
+        # Create legend
+        legend_patches = [mpatches.Patch(color=colors[i], label=building_type[:20]) 
+                         for i, building_type in enumerate(top_5_types)]
+        ax4.legend(handles=legend_patches, loc='upper right', bbox_to_anchor=(1.3, 1))
         
         plt.tight_layout()
         
