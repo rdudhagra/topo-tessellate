@@ -2,9 +2,10 @@ from terrain_generator.buildingsextractor import Building
 from terrain_generator.console import output
 from geopy.point import Point as GeopyPoint
 from geopy.distance import geodesic, distance
-import shapely
 from shapely.geometry import Polygon, Point, MultiPolygon
+from shapely import unary_union
 import random
+from collections import defaultdict
 
 class BuildingCoordinatesWrapper:
     """A wrapper for a building's coordinates."""
@@ -13,7 +14,7 @@ class BuildingCoordinatesWrapper:
         self.ref_lat = ref_lat
         self.ref_lon = ref_lon
         
-        # Assert that the ref lat/lon are less than the building's min lat/lon
+        # Pre-calculate bounds for performance
         minlon, minlat, _, _ = building.polygon.bounds
         assert ref_lat <= minlat and ref_lon <= minlon, "Reference lat/lon must be less than the building's min lat/lon"
 
@@ -25,6 +26,15 @@ class BuildingCoordinatesWrapper:
             geodesic_poly.append((x, y))
 
         self.geodesic_polygon = Polygon(geodesic_poly)
+        # Cache centroid for repeated access
+        self._centroid = None
+
+    @property
+    def centroid(self):
+        """Cached centroid property to avoid repeated calculations."""
+        if self._centroid is None:
+            self._centroid = self.geodesic_polygon.centroid
+        return self._centroid
 
     def __hash__(self):
         return hash((self.building.osm_id, self.geodesic_polygon.wkt))
@@ -50,15 +60,22 @@ class BuildingsGeoBins:
     ):
         self.buildings = buildings
         self.bin_size_meters = bin_size_meters
-        self.bins: dict[tuple[int, int], list[BuildingCoordinatesWrapper]] = {}
+        self.bins: dict[tuple[int, int], list[BuildingCoordinatesWrapper]] = defaultdict(list)
         self.debug = debug
         self.min_lat, self.min_lon = self.get_buildings_min()
         self.build_bins()
 
     def get_buildings_min(self):
         """Get the minimum latitude and longitude of all the buildings to use a reference for geodesic calculations."""
-        min_lat = min(min(building.polygon.exterior.coords, key=lambda x: x[1])[1] for building in self.buildings)
-        min_lon = min(min(building.polygon.exterior.coords, key=lambda x: x[0])[0] for building in self.buildings)
+        # Optimized to compute min values in a single pass
+        min_lat = float('inf')
+        min_lon = float('inf')
+        
+        for building in self.buildings:
+            bounds = building.polygon.bounds
+            min_lon = min(min_lon, bounds[0])
+            min_lat = min(min_lat, bounds[1])
+        
         return min_lat, min_lon
 
     def add_building(self, building: Building | BuildingCoordinatesWrapper):
@@ -76,8 +93,6 @@ class BuildingsGeoBins:
             for y_bin in range(
                 int(miny / self.bin_size_meters), int(maxy / self.bin_size_meters) + 1
             ):
-                if (x_bin, y_bin) not in self.bins:
-                    self.bins[(x_bin, y_bin)] = []
                 self.bins[(x_bin, y_bin)].append(building_wrapper)
 
     def remove_building(self, building: Building | BuildingCoordinatesWrapper):
@@ -95,20 +110,19 @@ class BuildingsGeoBins:
             for y_bin in range(
                 int(miny / self.bin_size_meters), int(maxy / self.bin_size_meters) + 1
             ):
-                if (x_bin, y_bin) in self.bins:
-                    if building_wrapper in self.bins[(x_bin, y_bin)]:
-                        self.bins[(x_bin, y_bin)].remove(building_wrapper)
-                        if len(self.bins[(x_bin, y_bin)]) == 0:
-                            del self.bins[(x_bin, y_bin)]
+                bin_key = (x_bin, y_bin)
+                if bin_key in self.bins and building_wrapper in self.bins[bin_key]:
+                    self.bins[bin_key].remove(building_wrapper)
+                    if len(self.bins[bin_key]) == 0:
+                        del self.bins[bin_key]
 
     def build_bins(self):
         if self.debug:
             output.info(f"Building bins with size {self.bin_size_meters} meters...")
 
         for i, building in enumerate(self.buildings):
-            if self.debug:
-                if i % 1000 == 0:
-                    output.info(f"Building {i} of {len(self.buildings)}...")
+            if self.debug and i % 1000 == 0:
+                output.info(f"Building {i} of {len(self.buildings)}...")
 
             self.add_building(building)
 
@@ -126,7 +140,7 @@ class BuildingsGeoBins:
         Returns:
         """
         buffer = Point(x, y).buffer(radius_meters)
-        building_wrappers = []
+        building_wrappers_set = set()  # Use set to avoid duplicates
 
         minx = x - radius_meters
         maxx = x + radius_meters
@@ -142,9 +156,9 @@ class BuildingsGeoBins:
                 if (x_bin, y_bin) in self.bins:
                     for building_wrapper in self.bins[(x_bin, y_bin)]:
                         if building_wrapper.geodesic_polygon.within(buffer):
-                            building_wrappers.append(building_wrapper)
+                            building_wrappers_set.add(building_wrapper)
 
-        return building_wrappers
+        return list(building_wrappers_set)
 
     def is_empty(self) -> bool:
         """Check if the bins are empty."""
@@ -179,13 +193,22 @@ class BuildingsProcessor:
         # List of new buildings to return
         new_buildings = []
 
-        while geo_bins:
-            # Pick a random building from the bins
-            bin = random.choice(list(geo_bins.bins.keys()))
-            building_wrapper = random.choice(geo_bins.bins[bin])
+        # Cache keys list to avoid repeated conversion
+        bin_keys = list(geo_bins.bins.keys())
 
-            # Recursively find all buildings clustered together by fetching "close" buildings
-            building_wrappers_in_cluster = [building_wrapper]
+        while geo_bins:
+            # Pick a random building from the bins - use cached keys
+            if not bin_keys:
+                bin_keys = list(geo_bins.bins.keys())
+            
+            bin_key = random.choice(bin_keys)
+            if bin_key not in geo_bins.bins:  # Key might have been removed
+                bin_keys.remove(bin_key)
+                continue
+                
+            building_wrapper = random.choice(geo_bins.bins[bin_key])
+
+            building_wrappers_in_cluster = {building_wrapper}
 
             # Create a queue of buildings to query
             building_wrappers_query_queue = [building_wrapper]
@@ -195,22 +218,27 @@ class BuildingsProcessor:
                 building_wrapper = building_wrappers_query_queue.pop(0)
 
                 building_wrappers_in_radius = geo_bins.get_building_wrappers_within_radius(
-                    building_wrapper.geodesic_polygon.centroid.x,
-                    building_wrapper.geodesic_polygon.centroid.y,
+                    building_wrapper.centroid.x,  # Use cached centroid
+                    building_wrapper.centroid.y,
                     max_building_distance_meters,
                 )
-                building_wrappers_query_queue.extend(building_wrappers_in_radius)
-                building_wrappers_in_cluster.extend(building_wrappers_in_radius)
-                for building_wrapper_in_radius in building_wrappers_in_radius:
-                    geo_bins.remove_building(building_wrapper_in_radius)
+                
+                new_wrappers = []
+                for wrapper in building_wrappers_in_radius:
+                    if wrapper not in building_wrappers_in_cluster:
+                        building_wrappers_in_cluster.add(wrapper)
+                        new_wrappers.append(wrapper)
+                        geo_bins.remove_building(wrapper)
+                
+                building_wrappers_query_queue.extend(new_wrappers)
 
-            # Remove duplicates
-            building_wrappers_in_cluster = list(set(building_wrappers_in_cluster))
+            # Convert set back to list for merge_buildings
+            building_wrappers_list = list(building_wrappers_in_cluster)
 
             # Combine the polygons of the buildings in the cluster into a single polygon
             new_buildings.extend(
                 self.merge_buildings(
-                    building_wrappers_in_cluster, geo_bins, max_building_distance_meters
+                    building_wrappers_list, geo_bins, max_building_distance_meters
                 )
             )
 
@@ -229,7 +257,7 @@ class BuildingsProcessor:
         grown = [
             p.buffer(+max_building_distance_meters) for p in geodesic_polys
         ]  # dilate each polygon, buffer by d meters
-        merged = shapely.unary_union(grown)  # dissolve overlaps fast
+        merged = unary_union(grown)  # dissolve overlaps fast - use direct import
         result_poly = merged.buffer(
             -max_building_distance_meters
         )  # erode back to near-original size
@@ -243,20 +271,26 @@ class BuildingsProcessor:
 
         # Convert the polygon back to lat/lon coordinates
         new_buildings: list[Building] = []
+        
         for result in results:
             lat_lon_poly = []
             for coord in result.exterior.coords:
                 x, y = coord
+                # Create new point for each coordinate transformation
                 point = GeopyPoint(geo_bins.min_lat, geo_bins.min_lon)
                 point = distance(meters=x).destination(point=point, bearing=90)
                 point = distance(meters=y).destination(point=point, bearing=0)
                 lat_lon_poly.append((point.longitude, point.latitude))
 
             new_poly = Polygon(lat_lon_poly)
+
+            # Cache max height calculation
+            max_height = max(building_wrapper.building.height for building_wrapper in building_wrappers)
+            
             new_buildings.append(
                 Building(
                     polygon=new_poly,
-                    height=max(building_wrapper.building.height for building_wrapper in building_wrappers),
+                    height=max_height,
                     building_type=building_wrappers[0].building.building_type,
                     osm_id=building_wrappers[0].building.osm_id,
                     area=new_poly.area,
