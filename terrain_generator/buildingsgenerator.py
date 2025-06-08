@@ -48,6 +48,11 @@ class BuildingsGenerator:
             this_chunk_meshes = mr.std_vector_std_shared_ptr_Mesh()
 
             for building in building_chunk:
+                # If the points are empty, skip the building
+                if len(building.polygon.exterior.coords) == 0:
+                    output.warning(f"Skipping building {building.osm_id} because it has no points")
+                    continue
+
                 # First, convert the coordinates to model coordinates
                 points = np.array(
                     self.elevation.get_model_coordinates(
