@@ -16,18 +16,16 @@ class BuildingCoordinatesWrapper:
         self.ref_lat = ref_lat
         self.ref_lon = ref_lon
 
-        # Pre-calculate bounds for performance
-        minlon, minlat, _, _ = building.polygon.bounds
-        assert (
-            ref_lat <= minlat and ref_lon <= minlon
-        ), "Reference lat/lon must be less than the building's min lat/lon"
-
         geodesic_poly = []
         for coord in building.polygon.exterior.coords:
             lon, lat = coord
+
+            x_sign = 1 if lon > ref_lon else -1
+            y_sign = 1 if lat > ref_lat else -1
+
             x = geodesic((lat, ref_lon), (lat, lon)).meters
             y = geodesic((ref_lat, lon), (lat, lon)).meters
-            geodesic_poly.append((x, y))
+            geodesic_poly.append((x * x_sign, y * y_sign))
 
         self.geodesic_polygon = Polygon(geodesic_poly)
         # Cache centroid for repeated access
