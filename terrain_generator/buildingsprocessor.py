@@ -1,4 +1,4 @@
-from terrain_generator.buildingsextractor import Building
+from terrain_generator.buildingbase import Building
 from terrain_generator.console import output
 from geopy.point import Point as GeopyPoint
 from geopy.distance import geodesic, distance

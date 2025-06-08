@@ -36,7 +36,7 @@ def generate_terrain(prefix, bounds):
             base_height=base_height,
             water_threshold=1,
             elevation_multiplier=elevation_multiplier,
-            downsample_factor=10,
+            downsample_factor=1,
         )
 
         # Extract buildings

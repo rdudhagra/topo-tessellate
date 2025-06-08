@@ -20,7 +20,7 @@ from shapely.geometry import Polygon
 # Add the parent directory to the path to import terrain_generator modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from terrain_generator.buildingsextractor import Building
+from terrain_generator.buildingbase import Building
 from terrain_generator.buildingsprocessor import BuildingsProcessor, BuildingsGeoBins
 from terrain_generator.console import output
 

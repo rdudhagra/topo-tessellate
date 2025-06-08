@@ -1,4 +1,4 @@
-from terrain_generator.buildingsextractor import Building
+from terrain_generator.buildingbase import Building
 from terrain_generator.elevation import Elevation
 import numpy as np
 import meshlib.mrmeshpy as mr
