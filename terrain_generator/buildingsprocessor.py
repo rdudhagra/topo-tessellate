@@ -229,6 +229,12 @@ class BuildingsProcessor:
 
             building_wrapper = random.choice(geo_bins.bins[bin_key])
 
+            # Skip the building if significant (don't cluster it)
+            if building_wrapper.building.significant:
+                new_buildings.append(building_wrapper.building)
+                geo_bins.remove_building(building_wrapper)
+                continue
+
             building_wrappers_in_cluster = {building_wrapper}
 
             # Create a queue of buildings to query

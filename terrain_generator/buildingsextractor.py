@@ -51,6 +51,11 @@ class Building:
             ]
         ).contains(self.polygon)
     
+    @property
+    def significant(self) -> bool:
+        """Check if the building is significant."""
+        return self.area > 17500 or self.height > 100
+    
     def __hash__(self):
         return hash((self.osm_id, self.polygon.wkt))
 
