@@ -51,7 +51,7 @@ class BuildingsGenerator:
                 # First, convert the coordinates to model coordinates
                 points = np.array(
                     self.elevation.get_model_coordinates(
-                        elevation_data, bounds, building.coordinates
+                        elevation_data, bounds, building.polygon.exterior.coords
                     )
                 )
 

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from collections import defaultdict
+from shapely.geometry import Polygon
 
 # Import the new console output system
 from .console import output
@@ -29,9 +30,22 @@ class Building:
 
     osm_id: int
     building_type: str
-    coordinates: List[Tuple[float, float]]
+    polygon: Polygon
     area: float
     height: float
+
+    def is_inside_bbox(self, bbox: tuple[float, float, float, float]) -> bool:
+        """Check if the building is inside the given bbox."""
+        min_lon, min_lat, max_lon, max_lat = bbox
+
+        return Polygon(
+            [
+                (min_lon, min_lat),
+                (max_lon, min_lat),
+                (max_lon, max_lat),
+                (min_lon, max_lat),
+            ]
+        ).contains(self.polygon)
 
 
 class BuildingsExtractor:
@@ -350,36 +364,26 @@ out geom;"""
                     return True
         return False
 
-    def calculate_area(self, coordinates: List[Tuple[float, float]]) -> float:
+    def calculate_area(self, polygon: Polygon) -> float:
         """Calculate the area of a polygon using the shoelace formula.
 
         Args:
-            coordinates: List of (lon, lat) coordinate pairs
+            polygon: Polygon of the building
 
         Returns:
             Area in square meters (approximate)
         """
-        if len(coordinates) < 3:
+        if len(polygon.exterior.coords) < 3:
             return 0.0
 
-        # Convert to Cartesian coordinates (rough approximation)
-        # For more accurate calculations, we'd need to project to a local coordinate system
-        area = 0.0
-        n = len(coordinates)
-
-        for i in range(n):
-            j = (i + 1) % n
-            area += coordinates[i][0] * coordinates[j][1]
-            area -= coordinates[j][0] * coordinates[i][1]
-
-        area = abs(area) / 2.0
+        area = polygon.area
 
         # Convert to approximate square meters (very rough conversion)
         # 1 degree ≈ 111,320 meters at equator
         area_m2 = area * (111320**2)
 
         return area_m2
-
+    
     def extract_height(self, tags: Dict[str, str]) -> float:
         """Extract building height from tags, or return default height.
 
@@ -428,7 +432,7 @@ out geom;"""
         self, bounds: Tuple[float, float, float, float], force_refresh: bool = False
     ) -> List[Building]:
         """Extract building data from OpenStreetMap for the given bounds.
-        Returns buildings with polygon coordinates and height (explicit or default 5m).
+        Returns buildings with polygon and height (explicit or default 5m).
 
         Args:
             bounds: (min_lon, min_lat, max_lon, max_lat) bounding box
@@ -503,9 +507,11 @@ out geom;"""
             if len(coordinates) < 3:
                 excluded_no_geometry += 1
                 continue
+            
+            polygon = Polygon(coordinates)
 
             # Calculate area
-            area = self.calculate_area(coordinates)
+            area = self.calculate_area(polygon)
 
             # Extract height (explicit or default)
             height = self.extract_height(tags)
@@ -535,7 +541,7 @@ out geom;"""
             building = Building(
                 osm_id=element.get("id", "unknown"),
                 building_type=building_type,
-                coordinates=coordinates,
+                polygon=polygon,
                 area=area,
                 height=height,
             )
@@ -701,7 +707,7 @@ if __name__ == "__main__":
         output.info(f"  Type: {building.building_type}")
         output.info(f"  Area: {building.area:.0f} m²")
         output.info(f"  Height: {building.height:.1f} m")
-        output.info(f"  Coordinates: {len(building.coordinates)} points")
+        output.info(f"  Coordinates: {len(building.polygon.exterior.coords)} points")
 
         # Check if height was explicit or default
         has_explicit = (

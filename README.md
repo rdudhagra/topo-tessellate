@@ -128,7 +128,7 @@ for building in buildings[:5]:
     print(f"Building {building.osm_id}: {building.building_type}")
     print(f"  Area: {building.area:.0f} m²")  # Always available
     print(f"  Height: {building.height:.1f} m")  # Always available
-    print(f"  Coordinates: {len(building.coordinates)} points")  # Always available
+    print(f"  Coordinates: {len(building.polygon.exterior.coords)} points")  # Always available
 ```
 
 The extraction process now includes:
