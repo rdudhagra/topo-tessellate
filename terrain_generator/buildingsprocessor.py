@@ -207,14 +207,15 @@ class BuildingsProcessor:
 
         # List of new buildings to return
         new_buildings = []
+        processed_buildings = 0
         last_update_printout_number = 0
 
         # Cache keys list to avoid repeated conversion
         bin_keys = list(geo_bins.bins.keys())
 
         while geo_bins:
-            if len(new_buildings) > last_update_printout_number:
-                output.info(f"Processed {len(new_buildings)}/{len(self.buildings)} buildings...")
+            if processed_buildings > last_update_printout_number:
+                output.info(f"Processed {processed_buildings}/{len(self.buildings)} buildings...")
                 last_update_printout_number += 1000
 
             # Pick a random building from the bins - use cached keys
@@ -263,6 +264,8 @@ class BuildingsProcessor:
                     building_wrappers_list, geo_bins, max_building_distance_meters
                 )
             )
+
+            processed_buildings += len(building_wrappers_list)
 
         return new_buildings
 
