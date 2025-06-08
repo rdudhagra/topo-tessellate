@@ -168,7 +168,7 @@ class BuildingsProcessor:
         return self.buildings
 
     def cluster_and_merge_buildings(
-        self, max_building_distance_meters: float = 10
+        self, max_building_distance_meters: float = 25
     ) -> list[list[Building]]:
         """Cluster buildings into groups based on their distance from each other.
         Then, combine the polygons of the buildings in each group into a single polygon.
@@ -222,7 +222,7 @@ class BuildingsProcessor:
         self,
         building_wrappers: list[BuildingCoordinatesWrapper],
         geo_bins: BuildingsGeoBins,
-        max_building_distance_meters: float = 10,
+        max_building_distance_meters: float,
     ) -> list[Building]:
         """Merge buildings into a single polygon. If the result is a MultiPolygon, return a list of buildings."""
         # Get all the polygons from the buildings
