@@ -40,7 +40,7 @@ def generate_terrain(prefix, bounds):
         )
 
         # Extract buildings
-        buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds)
+        buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds, max_building_distance_meters=35)
         buildings_generator = BuildingsGenerator(elevation)
         buildings_mesh = buildings_generator.generate_buildings(
             base_height,

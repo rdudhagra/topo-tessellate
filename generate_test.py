@@ -36,11 +36,11 @@ def generate_terrain(prefix, bounds):
         water_threshold=1,
         elevation_multiplier=elevation_multiplier,
         downsample_factor=1,
-        force_refresh=True,
+        force_refresh=False,
     )
 
     # Extract buildings
-    buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds, max_building_distance_meters=0, force_refresh=True)
+    buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds, max_building_distance_meters=0, force_refresh=False)
     buildings_generator = BuildingsGenerator(elevation)
     buildings_mesh = buildings_generator.generate_buildings(
         base_height,
