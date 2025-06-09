@@ -131,6 +131,5 @@ class BuildingsGenerator:
         return all_chunks_mesh
 
     def _order_points_clockwise(self, points):
-        center = np.mean(points, axis=0)
-        angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
-        return points[np.argsort(angles)]
+        # OSM uses counter-clockwise order, so we need to reverse the points
+        return points[::-1]

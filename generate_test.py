@@ -26,7 +26,7 @@ def generate_terrain(prefix, bounds):
     generator = ModelGenerator(elevation)
 
     elevation_multiplier = 1
-    base_height = 250
+    base_height = 150
 
     # Generate detailed terrain model
     result = generator.generate_terrain_model(

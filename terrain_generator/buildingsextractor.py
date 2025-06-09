@@ -110,9 +110,6 @@ class BuildingsExtractor:
             "utility",
             "service",
             "transformer_tower",
-            "water_tower",
-            "silo",
-            "tank",
             "bunker",
             "ruins",
             "bridge",
@@ -139,13 +136,15 @@ class BuildingsExtractor:
             "taxi",
         ],
         "leisure": ["playground", "picnic_table", "bbq", "firepit"],
-        "tourism": ["information", "viewpoint", "picnic_site"],
+        "tourism": ["information", "picnic_site"],
         "highway": ["*"],
         "railway": ["*"],
         "waterway": ["*"],
         "natural": ["*"],
         "landuse": ["*"],
         "power": ["*"],
+        "bridge": ["*"],
+        "bridge:support": ["*"],
     }
 
     def __init__(
