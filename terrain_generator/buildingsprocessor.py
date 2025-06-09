@@ -304,6 +304,11 @@ class BuildingsProcessor:
         new_buildings: list[Building] = []
 
         for result in results:
+            # Assert that the bounding box of the polygon is reasonable. Really big buildings are probably wrong.
+            if result.bounds[2] - result.bounds[0] > 250 or result.bounds[3] - result.bounds[1] > 250:
+                output.warning(f"Building {building_wrappers[0].building.osm_id} has a bounding box that is too big: {result.bounds}")
+                continue
+            
             lat_lon_poly = []
             for coord in result.exterior.coords:
                 x, y = coord
@@ -316,7 +321,7 @@ class BuildingsProcessor:
             new_poly = Polygon(lat_lon_poly)
 
             # Simplify the polygon
-            new_poly = new_poly.simplify(tolerance=0.0001)
+            new_poly = new_poly.simplify(tolerance=0.00005)
 
             # Cache max height calculation
             max_height = max(
