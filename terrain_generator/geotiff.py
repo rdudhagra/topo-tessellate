@@ -2,6 +2,7 @@ import os
 import numpy as np
 import rasterio
 from rasterio.windows import from_bounds
+from rasterio.warp import calculate_default_transform, reproject, Resampling
 from .elevation import Elevation
 
 # Import the new console output system
@@ -30,52 +31,78 @@ class GeoTiff(Elevation):
 
         file_path = os.path.join(topo_dir, self.file_name)
         
-        try:
-            with rasterio.open(file_path) as src:
-                output.info(f"  GeoTIFF file: {file_path}")
-                output.info(f"  File bounds: {src.bounds}")
-                output.info(f"  File CRS: {src.crs}")
-                output.info(f"  File shape: {src.shape}")
-                output.info(f"  File transform: {src.transform}")
-                
-                # Check if the requested bounds overlap with the file bounds
-                file_bounds = src.bounds
-                if (max_lon < file_bounds.left or min_lon > file_bounds.right or
-                    max_lat < file_bounds.bottom or min_lat > file_bounds.top):
-                    raise ValueError(f"Requested bounds {bounds} do not overlap with GeoTIFF bounds {file_bounds}")
-                
-                # Clamp the bounds to the file bounds to avoid errors
-                clamped_bounds = (
-                    max(min_lon, file_bounds.left),
-                    max(min_lat, file_bounds.bottom),
-                    min(max_lon, file_bounds.right),
-                    min(max_lat, file_bounds.top)
-                )
-                
-                if clamped_bounds != bounds:
-                    output.warning(f"  Bounds clamped to file extent: {clamped_bounds}")
-                
-                # Get the window that corresponds to the bounds
-                window = from_bounds(*clamped_bounds, src.transform)
-                
-                output.info(f"  Reading window: {window}")
-                
-                # Read the elevation data for the window
-                elevation_data = src.read(1, window=window)
-                
-                # Handle no-data values
-                if src.nodata is not None:
-                    elevation_data = np.where(
-                        elevation_data == src.nodata, 0, elevation_data
-                    )
+        with rasterio.open(file_path) as src:
+            output.info(f"  GeoTIFF file: {file_path}")
+            output.info(f"  File bounds: {src.bounds}")
+            output.info(f"  File CRS: {src.crs}")
+            output.info(f"  File shape: {src.shape}")
+            output.info(f"  File transform: {src.transform}")
 
-                # Vertically flip the elevation data
-                elevation_data = np.flipud(elevation_data)
+            # First convert the CRS to EPSG:4326
+            dst_crs = "EPSG:4326"
+            if src.crs != dst_crs:
+                transform, width, height = calculate_default_transform(
+                    src.crs, dst_crs, src.width, src.height, *src.bounds)
                 
-                output.success(f"  Extracted elevation data shape: {elevation_data.shape}")
-                output.info(f"  Elevation range: {elevation_data.min():.1f}m to {elevation_data.max():.1f}m")
+                # Prepare the output metadata
+                kwargs = src.meta.copy()  # Start with the source metadata
+                kwargs.update({           # Update with the new values
+                    'crs': dst_crs,
+                    'transform': transform,
+                    'width': width,
+                    'height': height,
+                    'driver': 'GTiff'  # Specify the output format
+                })
                 
-                return elevation_data
-                
-        except Exception as e:
-            raise ValueError(f"Error reading GeoTIFF file {self.file_path}: {str(e)}")
+                # Reproject each band
+                with rasterio.open(f"{file_path}.transformed", 'w', **kwargs) as dst:
+                    for i in range(1, src.count + 1):
+                        reproject(
+                            source=rasterio.band(src, i),
+                            destination=rasterio.band(dst, i),
+                            src_transform=src.transform,
+                            src_crs=src.crs,
+                            dst_transform=transform,
+                            dst_crs=dst_crs,
+                            resampling=Resampling.nearest)
+                        
+                src = rasterio.open(f"{file_path}.transformed")
+            
+            # Check if the requested bounds overlap with the file bounds
+            file_bounds = src.bounds
+            if (max_lon < file_bounds.left or min_lon > file_bounds.right or
+                max_lat < file_bounds.bottom or min_lat > file_bounds.top):
+                raise ValueError(f"Requested bounds {bounds} do not overlap with GeoTIFF bounds {file_bounds}")
+            
+            # Clamp the bounds to the file bounds to avoid errors
+            clamped_bounds = (
+                max(min_lon, file_bounds.left),
+                max(min_lat, file_bounds.bottom),
+                min(max_lon, file_bounds.right),
+                min(max_lat, file_bounds.top)
+            )
+            
+            if clamped_bounds != bounds:
+                output.warning(f"  Bounds clamped to file extent: {clamped_bounds}")
+            
+            # Get the window that corresponds to the bounds
+            window = from_bounds(*clamped_bounds, src.transform)
+            
+            output.info(f"  Reading window: {window}")
+            
+            # Read the elevation data for the window
+            elevation_data = src.read(1, window=window)
+            
+            # Handle no-data values
+            if src.nodata is not None:
+                elevation_data = np.where(
+                    elevation_data == src.nodata, 0, elevation_data
+                )
+
+            # Vertically flip the elevation data
+            elevation_data = np.flipud(elevation_data)
+            
+            output.success(f"  Extracted elevation data shape: {elevation_data.shape}")
+            output.info(f"  Elevation range: {elevation_data.min():.1f}m to {elevation_data.max():.1f}m")
+            
+            return elevation_data

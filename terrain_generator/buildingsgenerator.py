@@ -83,7 +83,7 @@ class BuildingsGenerator:
                 # Compute the minimum elevation of the building's foundation
                 foundation_elevation = np.min(
                     [elevation_data[p[1], p[0]] for p in points_indices]
-                )
+                ) * elevation_multiplier
 
                 # Compute the height of the building
                 height = max(building.height * elevation_multiplier, min_building_height)

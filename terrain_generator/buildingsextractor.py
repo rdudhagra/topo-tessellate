@@ -406,7 +406,7 @@ out geom;"""
         return self.DEFAULT_HEIGHT
 
     def extract_buildings(
-        self, bounds: Tuple[float, float, float, float], force_refresh: bool = False
+        self, bounds: Tuple[float, float, float, float], force_refresh: bool = False, max_building_distance_meters: float = 35
     ) -> List[Building]:
         """Extract building data from OpenStreetMap for the given bounds.
         Returns buildings with polygon and height (explicit or default 5m).
@@ -414,6 +414,7 @@ out geom;"""
         Args:
             bounds: (min_lon, min_lat, max_lon, max_lat) bounding box
             force_refresh: If True, ignore cache and fetch fresh data
+            max_building_distance_meters: Maximum distance between buildings to cluster and merge. Set to 0 to disable clustering and merging.
 
         Returns:
             List of Building objects with polygon and height data
@@ -549,7 +550,8 @@ out geom;"""
         )
 
         # Now cluster and merge buildings
-        buildings = BuildingsProcessor(buildings).cluster_and_merge_buildings()
+        if max_building_distance_meters > 0:
+            buildings = BuildingsProcessor(buildings).cluster_and_merge_buildings(max_building_distance_meters)
 
         output.info(f"Clustered and merged {len(buildings)} buildings")
 

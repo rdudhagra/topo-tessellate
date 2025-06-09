@@ -315,6 +315,9 @@ class BuildingsProcessor:
 
             new_poly = Polygon(lat_lon_poly)
 
+            # Simplify the polygon
+            new_poly = new_poly.simplify(tolerance=0.0001)
+
             # Cache max height calculation
             max_height = max(
                 building_wrapper.building.height
