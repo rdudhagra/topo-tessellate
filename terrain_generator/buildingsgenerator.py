@@ -15,6 +15,7 @@ class BuildingsGenerator:
         base_height: float,
         elevation_data: np.ndarray,
         elevation_multiplier: float,
+        building_height_multiplier: float,
         bounds: tuple[float, float, float, float],
         buildings: list[Building],
         min_building_height: float = 25,
@@ -26,6 +27,7 @@ class BuildingsGenerator:
             base_height (float): The height of the base mesh
             elevation_data (np.ndarray): The elevation data
             elevation_multiplier (float): The elevation multiplier
+            building_height_multiplier (float): The building height multiplier
             bounds (tuple[float, float, float, float]): The bounds of the terrain
             buildings (list[Building]): The buildings to generate
             min_building_height (float, optional): The minimum height of a building. Defaults to 25.
@@ -86,7 +88,7 @@ class BuildingsGenerator:
                 ) * elevation_multiplier
 
                 # Compute the height of the building
-                height = max(building.height * elevation_multiplier, min_building_height)
+                height = max(building.height * building_height_multiplier, min_building_height)
 
                 # Create a mesh for the building
                 contours = mr.std_vector_std_vector_Vector2f()

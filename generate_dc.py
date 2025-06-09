@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Test Terrain Generator
+Washington DC Terrain Generator
 
-This script generates a 3D terrain model of the test area using SRTM elevation data
+This script generates a 3D terrain model of Washington DC using SRTM elevation data
 and extracts 3D-ready building data from OpenStreetMap.
 """
 
@@ -16,18 +16,18 @@ from terrain_generator.buildingsgenerator import BuildingsGenerator
 
 
 def generate_terrain(prefix, bounds):
-    """Generate a detailed Bay Area terrain model."""
-    output.header("Test Terrain Model Generation")
+    """Generate a detailed Washington DC terrain model."""
+    output.header("Washington DC Terrain Model Generation")
 
     # Create model generator
-    elevation = GeoTiff("USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif")
+    elevation = GeoTiff("USGS_one_meter_x32y431_MD_VA_Sandy_NCR_2014.tif")
 
     # elevation = SRTM()
     generator = ModelGenerator(elevation)
 
-    elevation_multiplier = 1
+    elevation_multiplier = 3.5
     building_height_multiplier = 1
-    base_height = 150
+    base_height = 250
 
     # Generate detailed terrain model
     result = generator.generate_terrain_model(
@@ -36,12 +36,12 @@ def generate_terrain(prefix, bounds):
         base_height=base_height,
         water_threshold=1,
         elevation_multiplier=elevation_multiplier,
-        downsample_factor=1,
+        downsample_factor=10,
         force_refresh=False,
     )
 
     # Extract buildings
-    buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds, max_building_distance_meters=0, force_refresh=False)
+    buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds, max_building_distance_meters=10, force_refresh=False)
     buildings_generator = BuildingsGenerator(elevation)
     buildings_mesh = buildings_generator.generate_buildings(
         base_height,
@@ -59,18 +59,18 @@ def generate_terrain(prefix, bounds):
     generator.save_mesh(result["base_mesh"], f"{prefix}_base.obj")
     generator.save_mesh(buildings_mesh, f"{prefix}_buildings.obj")
 
-    output.success("Bay Area terrain model generation complete!")
+    output.success("Washington DC terrain model generation complete!")
 
 
-def generate_test():
-    """Generate both terrain and extract buildings for the test area."""
+def generate_dc():
+    """Generate both terrain and extract buildings for Washington DC."""
     output.header(
-        "Test 3D Model Generator",
-        "Generating terrain and extracting buildings for the test area",
+        "Washington DC 3D Model Generator",
+        "Generating terrain and extracting buildings for Washington DC",
     )
 
-    # Test bounds (covers FiDi area in San Francisco)
-    bounds = (-122.42846, 37.77723, -122.37645, 37.81792)
+    # Washington DC bounds
+    bounds = (-77.0763712494, 38.8323434661, -76.9584701289, 38.920517513)
 
     output.info(f"Processing region: {bounds}")
     output.info("Longitude: {:.3f}° to {:.3f}°".format(bounds[0], bounds[2]))
@@ -79,15 +79,15 @@ def generate_test():
     output.print_section_divider()
 
     # Generate terrain
-    generate_terrain("test", bounds)
+    generate_terrain("dc", bounds)
 
     output.print_section_divider()
 
     # Extract buildings and create visualization
     # buildings = extract_buildings(bounds)
 
-    output.success("Test 3D model generation complete!")
+    output.success("Washington DC 3D model generation complete!")
 
 
 if __name__ == "__main__":
-    generate_test()
+    generate_dc()

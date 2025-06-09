@@ -27,6 +27,7 @@ def generate_terrain(prefix, bounds):
 
     try:
         elevation_multiplier = 3.5
+        building_height_multiplier = 1
         base_height = 2500
 
         # Generate detailed terrain model
@@ -46,6 +47,7 @@ def generate_terrain(prefix, bounds):
             base_height,
             result["elevation_data"],
             elevation_multiplier,
+            building_height_multiplier,
             bounds,
             buildings,
             min_building_height=150,
