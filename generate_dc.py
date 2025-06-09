@@ -34,14 +34,14 @@ def generate_terrain(prefix, bounds):
         bounds=bounds,
         topo_dir="topo",
         base_height=base_height,
-        water_threshold=1,
+        water_threshold=0,
         elevation_multiplier=elevation_multiplier,
-        downsample_factor=10,
+        downsample_factor=1,
         force_refresh=False,
     )
 
     # Extract buildings
-    buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds, max_building_distance_meters=10, force_refresh=False)
+    buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds, max_building_distance_meters=30, force_refresh=False)
     buildings_generator = BuildingsGenerator(elevation)
     buildings_mesh = buildings_generator.generate_buildings(
         base_height,
@@ -70,7 +70,7 @@ def generate_dc():
     )
 
     # Washington DC bounds
-    bounds = (-77.0763712494, 38.8323434661, -76.9584701289, 38.920517513)
+    bounds = (-77.0728342158, 38.8349886875, -76.9620071625, 38.9178722916)
 
     output.info(f"Processing region: {bounds}")
     output.info("Longitude: {:.3f}° to {:.3f}°".format(bounds[0], bounds[2]))
