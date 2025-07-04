@@ -316,11 +316,13 @@ class BuildingsExtractor:
         min_lon, min_lat, max_lon, max_lat = bounds
 
         # Query for all buildings (no height requirement)
+        # For relations, we need to fetch member ways separately to construct geometry
         query = f"""[out:json][timeout:{self.timeout}];
 (
   way["building"]({min_lat},{min_lon},{max_lat},{max_lon});
   relation["building"]["type"="multipolygon"]({min_lat},{min_lon},{max_lat},{max_lon});
 );
+(._;>;);
 out geom;"""
         return query
 
@@ -360,6 +362,38 @@ out geom;"""
 
         return area_m2
     
+    def _reconstruct_multipolygon_geometry(self, relation, all_elements):
+        """Reconstruct geometry for a multipolygon relation from its member ways."""
+        try:
+            # Create a mapping of way IDs to way geometries
+            way_geometries = {}
+            for element in all_elements:
+                if element.get("type") == "way" and "geometry" in element:
+                    way_id = element.get("id")
+                    way_geometries[way_id] = [(coord["lon"], coord["lat"]) for coord in element["geometry"]]
+            
+            # Get outer and inner members
+            members = relation.get("members", [])
+            outer_ways = [m for m in members if m.get("role") == "outer" and m.get("type") == "way"]
+            
+            if not outer_ways:
+                return None
+                
+            # For now, just use the first outer way as the main polygon
+            # This is a simplified approach - a full implementation would need to join way segments
+            first_outer = outer_ways[0]
+            way_ref = first_outer.get("ref")
+            
+            if way_ref in way_geometries:
+                coordinates = way_geometries[way_ref]
+                if len(coordinates) >= 3:
+                    return coordinates
+                    
+        except Exception as e:
+            output.warning(f"Error reconstructing multipolygon geometry: {e}")
+            
+        return None
+
     def extract_height(self, tags: Dict[str, str]) -> float:
         """Extract building height from tags, or return default height.
 
@@ -459,13 +493,17 @@ out geom;"""
         default_height_count = 0
         explicit_height_count = 0
 
-        for element in data.get("elements", []):
-            processed += 1
+        all_elements = data.get("elements", [])
+        
+        # Filter to only building elements (not member ways)
+        building_elements = []
+        for element in all_elements:
+            tags = element.get("tags", {})
+            if "building" in tags:
+                building_elements.append(element)
 
-            # Skip if no geometry
-            if "geometry" not in element:
-                excluded_no_geometry += 1
-                continue
+        for element in building_elements:
+            processed += 1
 
             # Extract tags
             tags = element.get("tags", {})
@@ -477,8 +515,22 @@ out geom;"""
 
             # Extract coordinates from geometry
             coordinates = []
-            for coord in element["geometry"]:
-                coordinates.append((coord["lon"], coord["lat"]))
+            
+            # Handle geometry extraction
+            if "geometry" in element:
+                # Direct geometry available
+                geometry = element.get("geometry", [])
+                for coord in geometry:
+                    if isinstance(coord, dict) and "lon" in coord and "lat" in coord:
+                        coordinates.append((coord["lon"], coord["lat"]))
+                    else:
+                        # Log unexpected geometry format
+                        output.warning(f"Unexpected geometry format for OSM {element.get('type')} {element.get('id')}: {coord}")
+            elif element.get("type") == "relation":
+                # Try to reconstruct multipolygon geometry
+                coordinates = self._reconstruct_multipolygon_geometry(element, all_elements)
+                if coordinates is None:
+                    coordinates = []
 
             # Skip if insufficient coordinates for a polygon
             if len(coordinates) < 3:
