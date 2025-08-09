@@ -60,7 +60,10 @@ class ModelGenerator:
 
     def _get_cache_filename(self, bounds: Tuple[float, float, float, float], 
                            topo_dir: str, base_height: float, elevation_multiplier: float,
-                           downsample_factor: int, water_threshold: Optional[float]) -> str:
+                           downsample_factor: int, water_threshold: Optional[float],
+                           decimate: bool, decimate_max_error: Optional[float],
+                           decimate_target_face_count: Optional[int],
+                           split_at_water_level: bool) -> str:
         """Generate a cache filename based on all input parameters.
 
         Args:
@@ -78,13 +81,23 @@ class ModelGenerator:
         params_str = f"{bounds[0]:.6f}_{bounds[1]:.6f}_{bounds[2]:.6f}_{bounds[3]:.6f}"
         params_str += f"_{topo_dir}_{base_height:.2f}_{elevation_multiplier:.2f}"
         params_str += f"_{downsample_factor}_{water_threshold}"
+        # Include new mesh generation options in cache key
+        params_str += f"_dec{int(bool(decimate))}"
+        params_str += f"_split{int(bool(split_at_water_level))}"
+        params_str += f"_decmerr{decimate_max_error if decimate_max_error is not None else 'None'}"
+        params_str += f"_decfaces{decimate_target_face_count if decimate_target_face_count is not None else 'None'}"
         
         # Create hash of parameters for shorter filename
         params_hash = hashlib.md5(params_str.encode()).hexdigest()[:12]
         
         # Create readable filename with key parameters
         bounds_str = f"{bounds[0]:.4f}_{bounds[1]:.4f}_{bounds[2]:.4f}_{bounds[3]:.4f}"
-        filename = f"terrain_{params_hash}_{bounds_str}_ds{downsample_factor}_wt{water_threshold}.pkl.gz"
+        filename = (
+            f"terrain_{params_hash}_{bounds_str}_ds{downsample_factor}_wt{water_threshold}"
+            f"_dec{int(bool(decimate))}"
+            f"_sp{int(bool(split_at_water_level))}"
+            f".pkl.gz"
+        )
         
         return os.path.join(self.CACHE_DIR, filename)
 
@@ -109,6 +122,9 @@ class ModelGenerator:
     def _save_to_cache(self, bounds: Tuple[float, float, float, float], 
                        topo_dir: str, base_height: float, elevation_multiplier: float,
                        downsample_factor: int, water_threshold: Optional[float],
+                       decimate: bool, decimate_max_error: Optional[float],
+                       decimate_target_face_count: Optional[int],
+                       split_at_water_level: bool,
                        result: Dict) -> None:
         """Save terrain generation result to cache.
 
@@ -124,9 +140,18 @@ class ModelGenerator:
         if not self.use_cache:
             return
 
-        cache_file = self._get_cache_filename(bounds, topo_dir, base_height, 
-                                            elevation_multiplier, downsample_factor, 
-                                            water_threshold)
+        cache_file = self._get_cache_filename(
+            bounds,
+            topo_dir,
+            base_height,
+            elevation_multiplier,
+            downsample_factor,
+            water_threshold,
+            decimate,
+            decimate_max_error,
+            decimate_target_face_count,
+            split_at_water_level,
+        )
 
         # Create base filename without extension for mesh files
         cache_base = cache_file.replace('.pkl.gz', '')
@@ -151,6 +176,10 @@ class ModelGenerator:
                 "elevation_multiplier": elevation_multiplier,
                 "downsample_factor": downsample_factor,
                 "water_threshold": water_threshold,
+                "decimate": decimate,
+                "decimate_max_error": decimate_max_error,
+                "decimate_target_face_count": decimate_target_face_count,
+                "split_at_water_level": split_at_water_level,
                 "elevation_data": result.get('elevation_data'),
                 "land_mesh_file": land_mesh_file if 'land_mesh' in result else None,
                 "base_mesh_file": base_mesh_file if 'base_mesh' in result else None,
@@ -175,7 +204,10 @@ class ModelGenerator:
 
     def _load_from_cache(self, bounds: Tuple[float, float, float, float], 
                          topo_dir: str, base_height: float, elevation_multiplier: float,
-                         downsample_factor: int, water_threshold: Optional[float]) -> Optional[Dict]:
+                         downsample_factor: int, water_threshold: Optional[float],
+                         decimate: bool, decimate_max_error: Optional[float],
+                         decimate_target_face_count: Optional[int],
+                         split_at_water_level: bool) -> Optional[Dict]:
         """Load terrain generation result from cache.
 
         Args:
@@ -192,9 +224,18 @@ class ModelGenerator:
         if not self.use_cache:
             return None
 
-        cache_file = self._get_cache_filename(bounds, topo_dir, base_height, 
-                                            elevation_multiplier, downsample_factor, 
-                                            water_threshold)
+        cache_file = self._get_cache_filename(
+            bounds,
+            topo_dir,
+            base_height,
+            elevation_multiplier,
+            downsample_factor,
+            water_threshold,
+            decimate,
+            decimate_max_error,
+            decimate_target_face_count,
+            split_at_water_level,
+        )
 
         if not self._is_cache_valid(cache_file):
             return None
@@ -204,12 +245,18 @@ class ModelGenerator:
                 cache_data = pickle.load(f)
 
             # Verify the parameters match
-            if (cache_data.get("bounds") != bounds or 
-                cache_data.get("topo_dir") != topo_dir or
-                cache_data.get("base_height") != base_height or
-                cache_data.get("elevation_multiplier") != elevation_multiplier or
-                cache_data.get("downsample_factor") != downsample_factor or
-                cache_data.get("water_threshold") != water_threshold):
+            if (
+                cache_data.get("bounds") != bounds
+                or cache_data.get("topo_dir") != topo_dir
+                or cache_data.get("base_height") != base_height
+                or cache_data.get("elevation_multiplier") != elevation_multiplier
+                or cache_data.get("downsample_factor") != downsample_factor
+                or cache_data.get("water_threshold") != water_threshold
+                or cache_data.get("decimate") != decimate
+                or cache_data.get("decimate_max_error") != decimate_max_error
+                or cache_data.get("decimate_target_face_count") != decimate_target_face_count
+                or cache_data.get("split_at_water_level") != split_at_water_level
+            ):
                 output.warning("Cache parameter mismatch, ignoring cache")
                 return None
 
@@ -437,7 +484,12 @@ class ModelGenerator:
         return elevation_data
 
     def _create_mesh_from_elevation(
-        self, elevation_data, bounds, base_height=1.0, elevation_multiplier=1.0
+        self,
+        elevation_data,
+        bounds,
+        base_height: float = 1.0,
+        elevation_multiplier: float = 1.0,
+        wall_bottom_z: float = 0.0,
     ):
         """
         Create a 3D mesh from elevation data with a flat base using meshlib.
@@ -462,8 +514,7 @@ class ModelGenerator:
         scale_y = height_meters / height
 
         # For realistic elevation scaling: 1 meter elevation = 1 meter in model
-        # The elevation_multiplier allows scaling from this realistic baseline
-        elevation_scale = elevation_multiplier  # Direct multiplier of realistic scale
+        elevation_scale = float(elevation_multiplier)
 
         output.progress_info(f"Creating mesh from {width}x{height} elevation grid")
         output.info(f"Real-world size: {width_meters/1000:.2f} x {height_meters/1000:.2f} km")
@@ -471,119 +522,129 @@ class ModelGenerator:
             f"Elevation range: {elevation_data.min():.1f} to {elevation_data.max():.1f} meters"
         )
 
-        # Create vertices in a structured way
-        vertices = []
+        # Vectorized vertex generation
+        xs = (np.arange(width, dtype=np.float32) * np.float32(scale_x))
+        ys = (np.arange(height, dtype=np.float32) * np.float32(scale_y))
+        X, Y = np.meshgrid(xs, ys)  # (H, W)
+        Z = elevation_data.astype(np.float32, copy=False) * np.float32(elevation_scale) + np.float32(base_height)
 
-        # Add top surface vertices (elevation surface)
-        for y in range(height):
-            for x in range(width):
-                point_x = x * scale_x
-                point_y = y * scale_y
-                # Scale elevation with realistic scaling multiplied by user multiplier
-                point_z = elevation_data[y, x] * elevation_scale + base_height
-                vertices.append([point_x, point_y, point_z])
+        top_vertices = np.stack((X, Y, Z), axis=-1).reshape(-1, 3)
 
-        # Add bottom surface vertices (flat base)
-        for y in range(height):
-            for x in range(width):
-                point_x = x * scale_x
-                point_y = y * scale_y
-                point_z = 0.0  # Flat base at z=0
-                vertices.append([point_x, point_y, point_z])
+        # Always use light base: include only perimeter bottom vertices to create outer walls
+        z_front = np.full_like(X[0, :], np.float32(wall_bottom_z), dtype=np.float32)
+        z_back = np.full_like(X[-1, :], np.float32(wall_bottom_z), dtype=np.float32)
+        z_left = np.full_like(X[:, 0], np.float32(wall_bottom_z), dtype=np.float32)
+        z_right = np.full_like(X[:, -1], np.float32(wall_bottom_z), dtype=np.float32)
+        front_bottom = np.stack((X[0, :], Y[0, :], z_front), axis=-1)
+        back_bottom = np.stack((X[-1, :], Y[-1, :], z_back), axis=-1)
+        left_bottom = np.stack((X[:, 0], Y[:, 0], z_left), axis=-1)
+        right_bottom = np.stack((X[:, -1], Y[:, -1], z_right), axis=-1)
+        perimeter_bottom = np.concatenate((front_bottom, back_bottom, left_bottom, right_bottom), axis=0)
+        vertices_array = np.concatenate((top_vertices, perimeter_bottom), axis=0).astype(np.float32, copy=False)
 
-        # Create faces manually for structured grid
-        faces = []
+        # Vectorized face generation
+        i = np.arange(height - 1, dtype=np.int32)[:, None]  # (H-1, 1)
+        j = np.arange(width - 1, dtype=np.int32)[None, :]   # (1, W-1)
+        tl = i * width + j
+        tr = tl + 1
+        bl = tl + width
+        br = bl + 1
 
-        # Top surface faces (elevation surface)
-        for y in range(height - 1):
-            for x in range(width - 1):
-                # Get vertex indices for current quad on top surface
-                top_left = y * width + x
-                top_right = y * width + (x + 1)
-                bottom_left = (y + 1) * width + x
-                bottom_right = (y + 1) * width + (x + 1)
+        top_faces = np.stack([tl, tr, bl, tr, br, bl], axis=-1).reshape(-1, 3)
 
-                # Create two triangles for each quad (counter-clockwise for upward normals)
-                # Triangle 1: top_left -> top_right -> bottom_left
-                faces.append([top_left, top_right, bottom_left])
-                # Triangle 2: top_right -> bottom_right -> bottom_left
-                faces.append([top_right, bottom_right, bottom_left])
+        faces_list = [top_faces]
 
-        # Bottom surface faces (flat base) - facing downward
-        offset = width * height  # Offset to bottom vertices
-        for y in range(height - 1):
-            for x in range(width - 1):
-                # Get vertex indices for current quad on bottom surface
-                top_left = offset + y * width + x
-                top_right = offset + y * width + (x + 1)
-                bottom_left = offset + (y + 1) * width + x
-                bottom_right = offset + (y + 1) * width + (x + 1)
+        # Always light base: construct walls using perimeter bottom vertices
+        offset = np.int32(height * width)
+        j1 = np.arange(width - 1, dtype=np.int32)
+        i1 = np.arange(height - 1, dtype=np.int32)
 
-                # Create two triangles for each quad (clockwise for downward normals)
-                # Triangle 1: top_left -> bottom_left -> top_right
-                faces.append([top_left, bottom_left, top_right])
-                # Triangle 2: top_right -> bottom_left -> bottom_right
-                faces.append([top_right, bottom_left, bottom_right])
-
-        # Side walls connecting top and bottom surfaces
+        # Index mapping for perimeter bottom vertices
+        # front: [0 .. width-1] -> offset + 0 .. offset + (width-1)
+        # back:  next width vertices -> offset + width .. offset + 2*width-1
+        # left:  next height vertices -> offset + 2*width .. offset + 2*width + (height-1)
+        # right: next height vertices -> offset + 2*width + height .. offset + 2*width + 2*height - 1
 
         # Front edge (y=0)
-        for x in range(width - 1):
-            top_left = x  # Top surface, front edge
-            top_right = x + 1  # Top surface, front edge
-            bottom_left = offset + x  # Bottom surface, front edge
-            bottom_right = offset + x + 1  # Bottom surface, front edge
-
-            # Two triangles connecting top front edge to bottom front edge
-            faces.append([top_left, bottom_left, top_right])
-            faces.append([top_right, bottom_left, bottom_right])
+        front_bottom_offset = offset
+        front = np.stack([
+            j1, front_bottom_offset + j1, j1 + 1,
+            j1 + 1, front_bottom_offset + j1, front_bottom_offset + j1 + 1
+        ], axis=-1).reshape(-1, 3)
+        faces_list.append(front)
 
         # Back edge (y=height-1)
-        back_row_offset = (height - 1) * width
-        for x in range(width - 1):
-            top_left = back_row_offset + x  # Top surface, back edge
-            top_right = back_row_offset + x + 1  # Top surface, back edge
-            bottom_left = offset + back_row_offset + x  # Bottom surface, back edge
-            bottom_right = offset + back_row_offset + x + 1  # Bottom surface, back edge
-
-            # Two triangles connecting top back edge to bottom back edge
-            faces.append([top_left, top_right, bottom_left])
-            faces.append([top_right, bottom_right, bottom_left])
+        back_row = np.int32((height - 1) * width)
+        back_bottom_offset = offset + np.int32(width)
+        back = np.stack([
+            back_row + j1, back_row + j1 + 1, back_bottom_offset + j1,
+            back_row + j1 + 1, back_bottom_offset + j1 + 1, back_bottom_offset + j1
+        ], axis=-1).reshape(-1, 3)
+        faces_list.append(back)
 
         # Left edge (x=0)
-        for y in range(height - 1):
-            top_left = y * width  # Top surface, left edge
-            top_right = (y + 1) * width  # Top surface, left edge
-            bottom_left = offset + y * width  # Bottom surface, left edge
-            bottom_right = offset + (y + 1) * width  # Bottom surface, left edge
-
-            # Two triangles connecting top left edge to bottom left edge
-            faces.append([top_left, top_right, bottom_left])
-            faces.append([top_right, bottom_right, bottom_left])
+        left_bottom_offset = offset + np.int32(2 * width)
+        left = np.stack([
+            i1 * width, (i1 + 1) * width, left_bottom_offset + i1,
+            (i1 + 1) * width, left_bottom_offset + i1 + 1, left_bottom_offset + i1
+        ], axis=-1).reshape(-1, 3)
+        faces_list.append(left)
 
         # Right edge (x=width-1)
-        for y in range(height - 1):
-            top_left = y * width + (width - 1)  # Top surface, right edge
-            top_right = (y + 1) * width + (width - 1)  # Top surface, right edge
-            bottom_left = offset + y * width + (width - 1)  # Bottom surface, right edge
-            bottom_right = (
-                offset + (y + 1) * width + (width - 1)
-            )  # Bottom surface, right edge
+        right_bottom_offset = offset + np.int32(2 * width + height)
+        right = np.stack([
+            i1 * width + (width - 1), right_bottom_offset + i1, (i1 + 1) * width + (width - 1),
+            (i1 + 1) * width + (width - 1), right_bottom_offset + i1, right_bottom_offset + i1 + 1
+        ], axis=-1).reshape(-1, 3)
+        faces_list.append(right)
 
-            # Two triangles connecting top right edge to bottom right edge
-            faces.append([top_left, bottom_left, top_right])
-            faces.append([top_right, bottom_left, bottom_right])
+        faces_array = np.concatenate(faces_list, axis=0).astype(np.int32, copy=False)
 
-        output.success(f"Generated mesh with {len(vertices)} vertices and {len(faces)} faces")
-
-        # Convert to numpy arrays
-        vertices_array = np.array(vertices, dtype=np.float32)
-        faces_array = np.array(faces, dtype=np.int32)
+        output.success(f"Generated mesh with {vertices_array.shape[0]} vertices and {faces_array.shape[0]} faces")
 
         # Create the mesh using meshlib mrmeshnumpy
         mesh = mn.meshFromFacesVerts(faces_array, vertices_array)
 
         return mesh
+
+    def _decimate_mesh(
+        self,
+        mesh,
+        max_error: Optional[float] = None,
+        target_face_count: Optional[int] = None,
+        preserve_boundary: bool = True,
+        max_edge_length: Optional[float] = None,
+    ) -> None:
+        """
+        Optionally decimate the mesh if supported by meshlib, preserving boundaries.
+
+        Args:
+            mesh: meshlib.mrmeshpy.Mesh instance
+            max_error: Maximum geometric error in world units (meters)
+            target_face_count: Target number of faces
+            preserve_boundary: Preserve boundary edges if supported
+            max_edge_length: Optional edge length cap
+        """
+        try:
+            if hasattr(mr, "DecimateSettings") and hasattr(mr, "decimateMesh"):
+                settings = mr.DecimateSettings()
+                if max_error is not None and hasattr(settings, "maxError"):
+                    settings.maxError = float(max_error)
+                if target_face_count is not None and hasattr(settings, "targetFaceCount"):
+                    settings.targetFaceCount = int(target_face_count)
+                if hasattr(settings, "preserveBoundary"):
+                    settings.preserveBoundary = bool(preserve_boundary)
+                if max_edge_length is not None and hasattr(settings, "maxEdgeLen"):
+                    settings.maxEdgeLen = float(max_edge_length)
+
+                mr.decimateMesh(mesh, settings)
+                if hasattr(mr, "optimizeTopology"):
+                    mr.optimizeTopology(mesh)
+                output.success("Applied mesh decimation")
+            else:
+                output.warning("Mesh decimation not available in this meshlib build; skipping")
+        except Exception as e:
+            output.warning(f"Mesh decimation failed: {e}")
     
     def save_mesh(self, mesh, filename):
         """
@@ -608,6 +669,12 @@ class ModelGenerator:
         downsample_factor=10,
         water_threshold=None,
         force_refresh=False,
+        decimate: bool = False,
+        decimate_max_error: Optional[float] = None,
+        decimate_target_face_count: Optional[int] = None,
+        decimate_preserve_boundary: bool = True,
+        split_at_water_level: bool = True,
+        merge_land_and_base: bool = False,
     ):
         """
         Generate a 3D terrain model from SRTM elevation data.
@@ -634,9 +701,18 @@ class ModelGenerator:
 
         # Try to load from cache first
         if not force_refresh:
-            cached_result = self._load_from_cache(bounds, topo_dir, base_height, 
-                                                elevation_multiplier, downsample_factor, 
-                                                water_threshold)
+            cached_result = self._load_from_cache(
+                bounds,
+                topo_dir,
+                base_height,
+                elevation_multiplier,
+                downsample_factor,
+                water_threshold,
+                decimate,
+                decimate_max_error,
+                decimate_target_face_count,
+                split_at_water_level,
+            )
             if cached_result is not None:
                 return cached_result
 
@@ -654,35 +730,92 @@ class ModelGenerator:
                 elevation_data, downsample_factor
             )
 
-        # Flatten the water level to the lowest elevation
-        output.subheader("Flattening water level")
-        terrain = self._flatten_water_level(elevation_data, water_threshold)
+        # Prepare elevation data for meshing (use a copy to avoid altering the original data)
+        output.subheader("Flattening water level for meshing")
+        elevation_data_for_mesh = elevation_data.copy()
+        if water_threshold is not None:
+            elevation_data_for_mesh = self._flatten_water_level(elevation_data_for_mesh, water_threshold)
+
+        # Elevation quantization removed per user preference
 
         # Create terrain mesh
         output.subheader("Creating terrain mesh")
+        # Determine wall bottom height for light_base to keep walls after split
+        if split_at_water_level and water_threshold is not None:
+            wall_bottom_z = float(water_threshold) * float(elevation_multiplier) + float(base_height)
+        else:
+            wall_bottom_z = 0.0
         terrain = self._create_mesh_from_elevation(
-            elevation_data, bounds, base_height, elevation_multiplier
+            elevation_data_for_mesh, bounds, base_height, elevation_multiplier, wall_bottom_z=wall_bottom_z
         )
 
-        # Split the terrain mesh at water level
-        output.subheader("Splitting terrain mesh at water level")
+        # Optionally split the terrain at water level and create base prism
+        if split_at_water_level:
+            output.subheader("Splitting terrain mesh at water level")
+            if water_threshold is None:
+                output.warning("Water threshold is None; skipping split")
+                land, base = terrain, None
+            else:
+                output.progress_info(
+                    f"Splitting at water level: {water_threshold:.2f} meters"
+                )
+                land, base = self._split_mesh_at_water_level(
+                    terrain,
+                    water_threshold,
+                    bounds,
+                    base_height,
+                    elevation_multiplier,
+                )
+        else:
+            land, base = terrain, None
 
-        output.progress_info(f"Splitting at water level: {water_threshold:.2f} meters")
+        # Optional decimation of the land mesh
+        if decimate and land is not None:
+            output.subheader("Decimating land mesh")
+            self._decimate_mesh(
+                land,
+                max_error=decimate_max_error,
+                target_face_count=decimate_target_face_count,
+                preserve_boundary=decimate_preserve_boundary,
+            )
 
-        land, base = self._split_mesh_at_water_level(
-            terrain, water_threshold, bounds, base_height, elevation_multiplier
-        )
+        # Optionally merge land and base into a single mesh for export
+        merged_mesh = None
+        if merge_land_and_base:
+            try:
+                meshes = mr.std_vector_std_shared_ptr_Mesh()
+                if land is not None:
+                    meshes.append(land)
+                if base is not None:
+                    meshes.append(base)
+                if len(meshes) > 0:
+                    merged_mesh = mr.mergeMeshes(meshes)
+                    output.success("Merged land and base into a single mesh")
+            except Exception as e:
+                output.warning(f"Failed to merge meshes: {e}")
 
         # Create result dictionary
         result = {
-            'elevation_data': elevation_data,
+            'elevation_data': elevation_data,  # keep original (non-flattened) for downstream consumers
             'land_mesh': land,
-            'base_mesh': base
+            'base_mesh': base,
+            'merged_mesh': merged_mesh,
         }
 
         # Save to cache
-        self._save_to_cache(bounds, topo_dir, base_height, elevation_multiplier,
-                           downsample_factor, water_threshold, result)
+        self._save_to_cache(
+            bounds,
+            topo_dir,
+            base_height,
+            elevation_multiplier,
+            downsample_factor,
+            water_threshold,
+            decimate,
+            decimate_max_error,
+            decimate_target_face_count,
+            split_at_water_level,
+            result,
+        )
 
         output.success("Terrain model generation complete!")
 

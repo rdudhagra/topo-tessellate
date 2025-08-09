@@ -15,8 +15,13 @@ from terrain_generator.console import output
 from terrain_generator.buildingsgenerator import BuildingsGenerator
 
 
-def generate_terrain(prefix, bounds):
-    """Generate a detailed Bay Area terrain model."""
+def generate_terrain(prefix, bounds, *,
+                     downsample_factor: int = 1,
+                     decimate: bool = False,
+                     decimate_max_error: float | None = None,
+                     decimate_target_face_count: int | None = None,
+                     generate_buildings: bool = False):
+    """Generate a terrain model with configurable parameters."""
     output.header("Test Terrain Model Generation")
 
     # Create model generator
@@ -36,30 +41,55 @@ def generate_terrain(prefix, bounds):
         base_height=base_height,
         water_threshold=1,
         elevation_multiplier=elevation_multiplier,
-        downsample_factor=1,
+        downsample_factor=downsample_factor,
         force_refresh=False,
+        decimate=decimate,
+        decimate_max_error=decimate_max_error,
+        decimate_target_face_count=decimate_target_face_count,
     )
 
-    # Extract buildings
-    buildings = BuildingsExtractor(timeout=120).extract_buildings(bounds, max_building_distance_meters=0, force_refresh=False)
-    buildings_generator = BuildingsGenerator(elevation)
-    buildings_mesh = buildings_generator.generate_buildings(
-        base_height,
-        result["elevation_data"],
-        elevation_multiplier,
-        building_height_multiplier,
-        bounds,
-        buildings,
-        min_building_height=10,
-    )
+    # Optionally extract buildings once
+    buildings_mesh = None
+    if generate_buildings:
+        buildings = BuildingsExtractor(timeout=120).extract_buildings(
+            bounds, max_building_distance_meters=0, force_refresh=False
+        )
+        buildings_generator = BuildingsGenerator(elevation)
+        buildings_mesh = buildings_generator.generate_buildings(
+            base_height,
+            result["elevation_data"],
+            elevation_multiplier,
+            building_height_multiplier,
+            bounds,
+            buildings,
+            min_building_height=10,
+        )
 
     # Save meshes
     output.progress_info(f"Saving meshes...")
     generator.save_mesh(result["land_mesh"], f"{prefix}_land.obj")
     generator.save_mesh(result["base_mesh"], f"{prefix}_base.obj")
-    generator.save_mesh(buildings_mesh, f"{prefix}_buildings.obj")
+    if buildings_mesh is not None:
+        generator.save_mesh(buildings_mesh, f"{prefix}_buildings.obj")
 
-    output.success("Bay Area terrain model generation complete!")
+    output.success("Terrain model generation complete!")
+
+
+def generate_comparison(bounds):
+    """Generate multiple variants to compare decimation and light_base settings."""
+    variants = [
+        {"name": "lightbase_ds1", "params": {"downsample_factor": 1, "decimate": False}, "buildings": False},
+        {"name": "lightbase_dec_err1m_ds2", "params": {"downsample_factor": 2, "decimate": True, "decimate_max_error": 1.0}, "buildings": False},
+        {"name": "lightbase_dec_err2m_ds2", "params": {"downsample_factor": 2, "decimate": True, "decimate_max_error": 2.0}, "buildings": False},
+        {"name": "lightbase_dec_250k_ds2", "params": {"downsample_factor": 2, "decimate": True, "decimate_target_face_count": 250_000}, "buildings": False},
+        {"name": "lightbase_dec_150k_ds4", "params": {"downsample_factor": 4, "decimate": True, "decimate_target_face_count": 150_000}, "buildings": False},
+    ]
+
+    for v in variants:
+        prefix = f"test_{v['name']}"
+        output.print_section_divider()
+        output.info(f"Generating variant: {prefix}")
+        generate_terrain(prefix, bounds, generate_buildings=v.get("buildings", False), **v["params"]) 
 
 
 def generate_test():
@@ -78,8 +108,8 @@ def generate_test():
 
     output.print_section_divider()
 
-    # Generate terrain
-    generate_terrain("test", bounds)
+    # Generate comparison variants
+    generate_comparison(bounds)
 
     output.print_section_divider()
 
