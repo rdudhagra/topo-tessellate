@@ -31,11 +31,21 @@
 # elevation_source:               # REQUIRED. Elevation data source settings.
 #   type: geotiff                 # REQUIRED. One of: "srtm" | "geotiff".
 #                                 #   srtm: reads SRTM tiles (*.hgt or .hgt.zip) located in topo_dir.
-#                                 #   geotiff: reads a GeoTIFF file clipped to bounds.
+#                                 #   geotiff: reads one or more GeoTIFF files, mosaicked & clipped to bounds.
 #   topo_dir: topo                # REQUIRED. Directory with elevation assets (relative or absolute path).
-#   file: USGS_1M_10_x....tif     # REQUIRED if type=geotiff. Filename under topo_dir. No path separators.
-#                                 #   The GeoTIFF will be reprojected to EPSG:4326 if needed.
-#                                 #   If bounds exceed GeoTIFF extents, they will be clamped.
+#   # For geotiff, you can specify any of the following (in priority order):
+#   #   - file: single filename under topo_dir
+#   #   - files: list of filenames under topo_dir
+#   #   - glob: shell pattern under topo_dir (e.g., "USGS_*.tif")
+#   #   If none of the above are specified, all *.tif/*.tiff in topo_dir are considered.
+#   #
+#   # Examples:
+#   # file: USGS_1M_10_x....tif
+#   # files: [USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif, USGS_1M_10_x55y420_CA_SanFrancisco_B24.tif]
+#   # glob: USGS_1M_10_*.tif
+#   #
+#   # All rasters are reprojected virtually to EPSG:4326 if needed and then mosaicked.
+#   # Only rasters intersecting the requested bounds are read.
 #                                 #
 #                                 # SRTM TILE NOTES (type=srtm):
 #                                 # - Place tiles like N37W122.hgt.zip, N38W122.hgt.zip in topo_dir.

@@ -6,7 +6,8 @@ bounds: [-122.67, 37.22, -121.75, 38.18]
 elevation_source:
   type: geotiff
   topo_dir: topo
-  file: output_USGS10m.tif
+  # Prefer auto-discovery; override with file/files if desired
+  glob: "*.tif"
 
 terrain:
   base_height: 2500

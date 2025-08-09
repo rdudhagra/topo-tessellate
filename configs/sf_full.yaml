@@ -6,13 +6,13 @@ bounds: [-122.521878,37.707039,-122.352077,37.838749]
 elevation_source:
   type: geotiff
   topo_dir: topo
-  # file: USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif
-  file: output_USGS10m.tif
+  # Use all SF-related tiles present; let the code auto-filter by bounds
+  glob: "USGS_1M_10_*_CA_SanFrancisco_B23.tif"
 
 terrain:
   base_height: 150
   elevation_multiplier: 1
-  downsample_factor: 1
+  downsample_factor: 5
   water_threshold: 1
   adaptive_tolerance_z: 10.0
   adaptive_max_gap_fraction: 0.001
@@ -21,7 +21,7 @@ terrain:
   split_at_water_level: true
 
 buildings:
-  enabled: true
+  enabled: false
   extract:
     max_building_distance_meters: 0
   generate:
@@ -30,8 +30,8 @@ buildings:
 
 tiling:
   enabled: true
-  rows: 3
-  cols: 3
+  rows: 1
+  cols: 1
   scale_max_length_mm: 200.0
 
 output:

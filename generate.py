@@ -65,10 +65,15 @@ def _build_elevation_source(cfg: Dict[str, Any]) -> Tuple[Any, str]:
     topo_dir = str(es.get("topo_dir", "topo"))
 
     if src_type == "geotiff":
+        # Support single file, multiple files, or glob auto-discovery
         file_name = es.get("file")
-        if not file_name:
-            raise ValueError("elevation_source.file is required for type=geotiff")
-        elevation = GeoTiff(str(file_name))
+        file_names = es.get("files") or []
+        if isinstance(file_names, str):
+            file_names = [file_names]
+        if file_name:
+            file_names = list(file_names) + [str(file_name)]
+        glob_pattern = es.get("glob")
+        elevation = GeoTiff(file_names or None, glob_pattern)
     elif src_type == "srtm":
         elevation = SRTM()
     else:

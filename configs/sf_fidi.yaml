@@ -6,7 +6,8 @@ bounds: [-122.42846, 37.77723, -122.37645, 37.81792]
 elevation_source:
   type: geotiff
   topo_dir: topo
-  file: USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif
+  # Either keep the single file or allow auto-discovery
+  files: [USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif]
 
 terrain:
   base_height: 150

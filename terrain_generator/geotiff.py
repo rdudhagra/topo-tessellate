@@ -1,8 +1,14 @@
 import os
+import glob
+from contextlib import ExitStack
 import numpy as np
 import rasterio
-from rasterio.windows import from_bounds
-from rasterio.warp import calculate_default_transform, reproject, Resampling
+from rasterio.warp import (
+    Resampling,
+    transform_bounds,
+)
+from rasterio.merge import merge as rio_merge
+from rasterio.vrt import WarpedVRT
 from .elevation import Elevation
 
 # Import the new console output system
@@ -10,99 +16,132 @@ from .console import output
 
 
 class GeoTiff(Elevation):
-    def __init__(self, file_name):
+    def __init__(self, file_names=None, glob_pattern=None):
         super().__init__()
-        self.file_name = file_name
+        # file_names: Optional[List[str]] relative to topo_dir
+        # glob_pattern: Optional[str] glob under topo_dir (e.g., "*.tif")
+        self.file_names = list(file_names) if file_names else None
+        self.glob_pattern = str(glob_pattern) if glob_pattern else None
+
+    @staticmethod
+    def _bounds_intersect(a, b):
+        # a, b are (min_lon, min_lat, max_lon, max_lat)
+        return not (a[2] <= b[0] or a[0] >= b[2] or a[3] <= b[1] or a[1] >= b[3])
+
+    def _discover_candidate_files(self, topo_dir: str) -> list[str]:
+        candidates: list[str] = []
+        # Include explicit file names (relative to topo_dir)
+        if self.file_names:
+            for fn in self.file_names:
+                candidates.append(os.path.join(topo_dir, fn))
+        # Include glob results
+        patterns = []
+        if self.glob_pattern:
+            patterns.append(self.glob_pattern)
+        if not self.file_names and not patterns:
+            # Default discovery of common raster extensions
+            patterns.extend(["*.tif", "*.tiff", "*.TIF", "*.TIFF"])
+        for pattern in patterns:
+            for p in glob.glob(os.path.join(topo_dir, pattern)):
+                candidates.append(p)
+        # Deduplicate while preserving order
+        seen = set()
+        unique: list[str] = []
+        for p in candidates:
+            if p not in seen:
+                unique.append(p)
+                seen.add(p)
+        # Sort for deterministic order
+        unique.sort()
+        return unique
 
     def get_elevation(self, bounds, topo_dir="topo"):
         """
-        Extract elevation data from GeoTIFF file for the given bounds.
+        Extract elevation data by mosaicking one or more GeoTIFFs matching bounds.
 
         Args:
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
-            topo_dir (str): Directory containing the GeoTIFF file (not used, kept for interface compatibility)
+            topo_dir (str): Directory containing GeoTIFF files
 
         Returns:
             numpy.ndarray: The extracted elevation data
         """
-        output.progress_info(f"Extracting elevation data from GeoTIFF for bounds: {bounds}")
-        
-        min_lon, min_lat, max_lon, max_lat = bounds
+        output.progress_info(f"Extracting elevation data from GeoTIFF(s) for bounds: {bounds}")
 
-        file_path = os.path.join(topo_dir, self.file_name)
-        
-        with rasterio.open(file_path) as src:
-            output.info(f"  GeoTIFF file: {file_path}")
-            output.info(f"  File bounds: {src.bounds}")
-            output.info(f"  File CRS: {src.crs}")
-            output.info(f"  File shape: {src.shape}")
-            output.info(f"  File transform: {src.transform}")
+        # Discover candidate files
+        candidate_paths = self._discover_candidate_files(topo_dir)
+        if not candidate_paths:
+            raise ValueError(f"No GeoTIFF files found in '{topo_dir}'")
 
-            # First convert the CRS to EPSG:4326
-            dst_crs = "EPSG:4326"
-            if src.crs != dst_crs:
-                transform, width, height = calculate_default_transform(
-                    src.crs, dst_crs, src.width, src.height, *src.bounds)
-                
-                # Prepare the output metadata
-                kwargs = src.meta.copy()  # Start with the source metadata
-                kwargs.update({           # Update with the new values
-                    'crs': dst_crs,
-                    'transform': transform,
-                    'width': width,
-                    'height': height,
-                    'driver': 'GTiff'  # Specify the output format
-                })
-                
-                # Reproject each band
-                with rasterio.open(f"{file_path}.transformed", 'w', **kwargs) as dst:
-                    for i in range(1, src.count + 1):
-                        reproject(
-                            source=rasterio.band(src, i),
-                            destination=rasterio.band(dst, i),
-                            src_transform=src.transform,
-                            src_crs=src.crs,
-                            dst_transform=transform,
-                            dst_crs=dst_crs,
-                            resampling=Resampling.nearest)
-                        
-                src = rasterio.open(f"{file_path}.transformed")
-            
-            # Check if the requested bounds overlap with the file bounds
-            file_bounds = src.bounds
-            if (max_lon < file_bounds.left or min_lon > file_bounds.right or
-                max_lat < file_bounds.bottom or min_lat > file_bounds.top):
-                raise ValueError(f"Requested bounds {bounds} do not overlap with GeoTIFF bounds {file_bounds}")
-            
-            # Clamp the bounds to the file bounds to avoid errors
-            clamped_bounds = (
-                max(min_lon, file_bounds.left),
-                max(min_lat, file_bounds.bottom),
-                min(max_lon, file_bounds.right),
-                min(max_lat, file_bounds.top)
+        # Filter by intersection with requested bounds (compare in EPSG:4326)
+        matched: list[str] = []
+        for p in candidate_paths:
+            try:
+                with rasterio.open(p) as ds:
+                    ds_bounds = ds.bounds
+                    ds_crs = ds.crs
+                    if ds_crs and str(ds_crs).upper() != "EPSG:4326":
+                        try:
+                            b = transform_bounds(ds_crs, "EPSG:4326", *ds_bounds, densify_pts=21)
+                            ds_wgs84 = (b[0], b[1], b[2], b[3])
+                        except Exception:
+                            # Fallback: assume original bounds
+                            ds_wgs84 = (ds_bounds.left, ds_bounds.bottom, ds_bounds.right, ds_bounds.top)
+                    else:
+                        ds_wgs84 = (ds_bounds.left, ds_bounds.bottom, ds_bounds.right, ds_bounds.top)
+                    if self._bounds_intersect(bounds, ds_wgs84):
+                        matched.append(p)
+            except Exception as exc:
+                output.warning(f"  Skipping '{p}': {exc}")
+
+        if not matched:
+            raise ValueError(
+                f"No GeoTIFF files in '{topo_dir}' intersect requested bounds {bounds}"
             )
-            
-            if clamped_bounds != bounds:
-                output.warning(f"  Bounds clamped to file extent: {clamped_bounds}")
-            
-            # Get the window that corresponds to the bounds
-            window = from_bounds(*clamped_bounds, src.transform)
-            
-            output.info(f"  Reading window: {window}")
-            
-            # Read the elevation data for the window
-            elevation_data = src.read(1, window=window)
-            
-            # Handle no-data values
-            if src.nodata is not None:
-                elevation_data = np.where(
-                    elevation_data == src.nodata, 0, elevation_data
-                )
 
-            # Vertically flip the elevation data
-            elevation_data = np.flipud(elevation_data)
-            
-            output.success(f"  Extracted elevation data shape: {elevation_data.shape}")
-            output.info(f"  Elevation range: {elevation_data.min():.1f}m to {elevation_data.max():.1f}m")
-            
-            return elevation_data
+        output.info(f"  Using {len(matched)} GeoTIFF file(s):")
+        for p in matched:
+            output.info(f"    - {os.path.basename(p)}")
+
+        # Build VRTs in EPSG:4326 and merge within requested bounds
+        dst_crs = "EPSG:4326"
+        with ExitStack() as stack:
+            vrts = []
+            for p in matched:
+                ds = stack.enter_context(rasterio.open(p))
+                if not ds.crs or str(ds.crs).upper() != dst_crs:
+                    vrt = stack.enter_context(
+                        WarpedVRT(ds, crs=dst_crs, resampling=Resampling.nearest)
+                    )
+                else:
+                    # Use dataset directly if already in EPSG:4326
+                    vrt = ds
+                vrts.append(vrt)
+
+            # Merge on-the-fly, clipped to bounds
+            mosaic, out_transform = rio_merge(
+                vrts,
+                bounds=bounds,
+                nodata=0,
+            )
+
+        # Use the first band (assumed elevation)
+        elevation_data = mosaic[0] if getattr(mosaic, "ndim", 0) == 3 else mosaic
+        if elevation_data is None:
+            raise ValueError("Failed to assemble elevation mosaic (no data)")
+
+        # Replace any remaining nodata (if present) with 0
+        elevation_data = np.where(np.isnan(elevation_data), 0, elevation_data)
+
+        # Vertically flip to maintain prior orientation expectations
+        elevation_data = np.flipud(elevation_data)
+
+        output.success(f"  Extracted elevation data shape: {elevation_data.shape}")
+        try:
+            output.info(
+                f"  Elevation range: {np.nanmin(elevation_data):.1f}m to {np.nanmax(elevation_data):.1f}m"
+            )
+        except Exception:
+            pass
+        
+        return elevation_data
