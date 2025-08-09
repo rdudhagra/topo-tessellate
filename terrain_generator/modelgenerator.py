@@ -448,14 +448,14 @@ class ModelGenerator:
             # Last fallback: 2D contour fill (fails on self-intersections)
             if not sealed and hasattr(mr, "fillContours2D"):
                 try:
-            mr.fillContours2D(terrain_mesh, hole_edges)
+                    mr.fillContours2D(terrain_mesh, hole_edges)
                     sealed = True
                 except Exception as exc:
                     contour_exc = exc
                     sealed = False
 
             if sealed:
-        output.progress_info("Successfully sealed holes in above-water mesh")
+                output.progress_info("Successfully sealed holes in above-water mesh")
             else:
                 output.warning(
                     f"Could not seal holes (plan: {plan_exc}; fillHoles: {fill_exc}; contours2D: {contour_exc}). Proceeding with open boundary."
