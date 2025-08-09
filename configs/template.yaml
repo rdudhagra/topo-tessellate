@@ -48,10 +48,11 @@
 #   water_threshold: 0            # [meters] Elevation below which is considered water. Used for flattening & splitting.
 #                                 #   null means: don't flatten or split by water level.
 #   force_refresh: false          # If true, ignore terrain cache and recompute terrain even if cached.
-#   decimate: false               # If true, attempt to reduce mesh face count via decimation (if supported by meshlib).
-#   decimate_max_error: null      # [meters] Max allowed geometric error during decimation. Example: 1.0 or 2.0.
-#   decimate_target_face_count: null  # Integer target faces. Example: 150000. Used alone or with max_error.
-#   decimate_preserve_boundary: true  # Preserve outer boundaries when decimating.
+#   # Adaptive meshing (replaces decimation):
+#   adaptive_tolerance_z: 1.0     # [meters] Z tolerance for simplifying rows/cols; larger -> fewer faces.
+#   adaptive_max_gap_fraction: 0.0039  # Max fraction of original resolution allowed as a single cell (default 1/256)
+#   adaptive_max_sampled_rows: 400 # Max rows sampled for RDP selection; bounds runtime
+#   adaptive_max_sampled_cols: 400 # Max cols sampled for RDP selection; bounds runtime
 #   split_at_water_level: true    # If true and water_threshold set, split terrain into land (above) and base (below).
 #   merge_land_and_base: false    # If true, produce a single merged mesh in-memory (see output.save_merged to write it).
 #   use_cache: true               # If true, cache terrain results in terrain_cache/ for faster repeat runs.

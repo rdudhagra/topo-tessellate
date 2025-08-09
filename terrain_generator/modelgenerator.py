@@ -61,8 +61,10 @@ class ModelGenerator:
     def _get_cache_filename(self, bounds: Tuple[float, float, float, float], 
                            topo_dir: str, base_height: float, elevation_multiplier: float,
                            downsample_factor: int, water_threshold: Optional[float],
-                           decimate: bool, decimate_max_error: Optional[float],
-                           decimate_target_face_count: Optional[int],
+                           adaptive_tolerance_z: float,
+                           adaptive_max_gap_fraction: float,
+                           adaptive_max_sampled_rows: int,
+                           adaptive_max_sampled_cols: int,
                            split_at_water_level: bool) -> str:
         """Generate a cache filename based on all input parameters.
 
@@ -81,11 +83,11 @@ class ModelGenerator:
         params_str = f"{bounds[0]:.6f}_{bounds[1]:.6f}_{bounds[2]:.6f}_{bounds[3]:.6f}"
         params_str += f"_{topo_dir}_{base_height:.2f}_{elevation_multiplier:.2f}"
         params_str += f"_{downsample_factor}_{water_threshold}"
-        # Include new mesh generation options in cache key
-        params_str += f"_dec{int(bool(decimate))}"
+        # Include adaptive meshing parameters
+        params_str += f"_adtol{adaptive_tolerance_z}"
+        params_str += f"_adgap{adaptive_max_gap_fraction}"
+        params_str += f"_adr{adaptive_max_sampled_rows}_adc{adaptive_max_sampled_cols}"
         params_str += f"_split{int(bool(split_at_water_level))}"
-        params_str += f"_decmerr{decimate_max_error if decimate_max_error is not None else 'None'}"
-        params_str += f"_decfaces{decimate_target_face_count if decimate_target_face_count is not None else 'None'}"
         
         # Create hash of parameters for shorter filename
         params_hash = hashlib.md5(params_str.encode()).hexdigest()[:12]
@@ -94,7 +96,7 @@ class ModelGenerator:
         bounds_str = f"{bounds[0]:.4f}_{bounds[1]:.4f}_{bounds[2]:.4f}_{bounds[3]:.4f}"
         filename = (
             f"terrain_{params_hash}_{bounds_str}_ds{downsample_factor}_wt{water_threshold}"
-            f"_dec{int(bool(decimate))}"
+            f"_ad{adaptive_tolerance_z}"
             f"_sp{int(bool(split_at_water_level))}"
             f".pkl.gz"
         )
@@ -122,8 +124,10 @@ class ModelGenerator:
     def _save_to_cache(self, bounds: Tuple[float, float, float, float], 
                        topo_dir: str, base_height: float, elevation_multiplier: float,
                        downsample_factor: int, water_threshold: Optional[float],
-                       decimate: bool, decimate_max_error: Optional[float],
-                       decimate_target_face_count: Optional[int],
+                       adaptive_tolerance_z: float,
+                       adaptive_max_gap_fraction: float,
+                       adaptive_max_sampled_rows: int,
+                       adaptive_max_sampled_cols: int,
                        split_at_water_level: bool,
                        result: Dict) -> None:
         """Save terrain generation result to cache.
@@ -147,9 +151,10 @@ class ModelGenerator:
             elevation_multiplier,
             downsample_factor,
             water_threshold,
-            decimate,
-            decimate_max_error,
-            decimate_target_face_count,
+            adaptive_tolerance_z,
+            adaptive_max_gap_fraction,
+            adaptive_max_sampled_rows,
+            adaptive_max_sampled_cols,
             split_at_water_level,
         )
 
@@ -176,9 +181,10 @@ class ModelGenerator:
                 "elevation_multiplier": elevation_multiplier,
                 "downsample_factor": downsample_factor,
                 "water_threshold": water_threshold,
-                "decimate": decimate,
-                "decimate_max_error": decimate_max_error,
-                "decimate_target_face_count": decimate_target_face_count,
+                "adaptive_tolerance_z": adaptive_tolerance_z,
+                "adaptive_max_gap_fraction": adaptive_max_gap_fraction,
+                "adaptive_max_sampled_rows": adaptive_max_sampled_rows,
+                "adaptive_max_sampled_cols": adaptive_max_sampled_cols,
                 "split_at_water_level": split_at_water_level,
                 "elevation_data": result.get('elevation_data'),
                 "land_mesh_file": land_mesh_file if 'land_mesh' in result else None,
@@ -205,8 +211,10 @@ class ModelGenerator:
     def _load_from_cache(self, bounds: Tuple[float, float, float, float], 
                          topo_dir: str, base_height: float, elevation_multiplier: float,
                          downsample_factor: int, water_threshold: Optional[float],
-                         decimate: bool, decimate_max_error: Optional[float],
-                         decimate_target_face_count: Optional[int],
+                         adaptive_tolerance_z: float,
+                         adaptive_max_gap_fraction: float,
+                         adaptive_max_sampled_rows: int,
+                         adaptive_max_sampled_cols: int,
                          split_at_water_level: bool) -> Optional[Dict]:
         """Load terrain generation result from cache.
 
@@ -231,9 +239,10 @@ class ModelGenerator:
             elevation_multiplier,
             downsample_factor,
             water_threshold,
-            decimate,
-            decimate_max_error,
-            decimate_target_face_count,
+            adaptive_tolerance_z,
+            adaptive_max_gap_fraction,
+            adaptive_max_sampled_rows,
+            adaptive_max_sampled_cols,
             split_at_water_level,
         )
 
@@ -252,9 +261,10 @@ class ModelGenerator:
                 or cache_data.get("elevation_multiplier") != elevation_multiplier
                 or cache_data.get("downsample_factor") != downsample_factor
                 or cache_data.get("water_threshold") != water_threshold
-                or cache_data.get("decimate") != decimate
-                or cache_data.get("decimate_max_error") != decimate_max_error
-                or cache_data.get("decimate_target_face_count") != decimate_target_face_count
+                or cache_data.get("adaptive_tolerance_z") != adaptive_tolerance_z
+                or cache_data.get("adaptive_max_gap_fraction") != adaptive_max_gap_fraction
+                or cache_data.get("adaptive_max_sampled_rows") != adaptive_max_sampled_rows
+                or cache_data.get("adaptive_max_sampled_cols") != adaptive_max_sampled_cols
                 or cache_data.get("split_at_water_level") != split_at_water_level
             ):
                 output.warning("Cache parameter mismatch, ignoring cache")
@@ -490,9 +500,13 @@ class ModelGenerator:
         base_height: float = 1.0,
         elevation_multiplier: float = 1.0,
         wall_bottom_z: float = 0.0,
+        adaptive_tolerance_z: float = 1.0,
+        adaptive_max_gap_fraction: float = 1/256,
+        adaptive_max_sampled_rows: int = 400,
+        adaptive_max_sampled_cols: int = 400,
     ):
         """
-        Create a 3D mesh from elevation data with a flat base using meshlib.
+        Create a 3D mesh from elevation data with a flat base using an adaptive grid.
 
         Args:
             elevation_data (numpy.ndarray): 2D array of elevation values
@@ -508,64 +522,145 @@ class ModelGenerator:
         # Calculate real-world dimensions of the bounds
         width_meters, height_meters = self.elevation.calculate_bounds_dimensions_meters(bounds)
 
-        # Calculate scale factor to fit real-world dimensions to grid
-        # This makes 1 grid unit = actual meters in the real world
+        # Scale factors (meters per grid step)
         scale_x = width_meters / width
         scale_y = height_meters / height
-
-        # For realistic elevation scaling: 1 meter elevation = 1 meter in model
         elevation_scale = float(elevation_multiplier)
 
-        output.progress_info(f"Creating mesh from {width}x{height} elevation grid")
+        # Report source grid
+        output.progress_info(f"Creating adaptive mesh from {width}x{height} elevation grid")
         output.info(f"Real-world size: {width_meters/1000:.2f} x {height_meters/1000:.2f} km")
-        output.info(
-            f"Elevation range: {elevation_data.min():.1f} to {elevation_data.max():.1f} meters"
-        )
+        output.info(f"Elevation range: {elevation_data.min():.1f} to {elevation_data.max():.1f} meters")
 
-        # Vectorized vertex generation
+        # Choose tolerance (meters in Z) for adaptive sampling from parameters
+        adaptive_tol = float(adaptive_tolerance_z)
+
+        # Helper: RDP for 1D sequence to select indices
+        def rdp_indices_1d(coord: np.ndarray, values: np.ndarray, eps: float) -> np.ndarray:
+            n = coord.shape[0]
+            if n <= 2:
+                return np.array([0, n - 1], dtype=np.int32)
+            keep = np.zeros(n, dtype=bool)
+            keep[0] = True
+            keep[-1] = True
+            stack = [(0, n - 1)]
+            while stack:
+                s, e = stack.pop()
+                if e - s <= 1:
+                    continue
+                x1, y1 = coord[s], values[s]
+                x2, y2 = coord[e], values[e]
+                dx = x2 - x1
+                dy = y2 - y1
+                if dx == 0 and dy == 0:
+                    # All collinear zero-length, skip
+                    continue
+                # Perpendicular distance of points to line segment (x1,y1)-(x2,y2)
+                idx = np.arange(s + 1, e, dtype=np.int32)
+                x = coord[idx]
+                y = values[idx]
+                # Distance formula: |dy*x - dx*y + (x2*y1 - y2*x1)| / sqrt(dx^2 + dy^2)
+                num = np.abs(dy * x - dx * y + (x2 * y1 - y2 * x1))
+                den = np.hypot(dx, dy)
+                d = num / den
+                imax_local = int(idx[np.argmax(d)]) if idx.size > 0 else -1
+                dmax = float(d.max()) if idx.size > 0 else 0.0
+                if dmax > eps and imax_local >= 0:
+                    keep[imax_local] = True
+                    stack.append((s, imax_local))
+                    stack.append((imax_local, e))
+            return np.flatnonzero(keep).astype(np.int32)
+
+        # Build selected columns via sampling several rows
         xs = (np.arange(width, dtype=np.float32) * np.float32(scale_x))
         ys = (np.arange(height, dtype=np.float32) * np.float32(scale_y))
-        X, Y = np.meshgrid(xs, ys)  # (H, W)
-        Z = elevation_data.astype(np.float32, copy=False) * np.float32(elevation_scale) + np.float32(base_height)
+        selected_cols: set[int] = set([0, width - 1])
+        selected_rows: set[int] = set([0, height - 1])
 
-        top_vertices = np.stack((X, Y, Z), axis=-1).reshape(-1, 3)
+        # Choose sampling steps to bound runtime
+        # Determine sampling step sizes based on caps
+        row_cap = max(1, int(adaptive_max_sampled_rows))
+        col_cap = max(1, int(adaptive_max_sampled_cols))
+        row_step = max(1, height // row_cap)
+        col_step = max(1, width // col_cap)
 
-        # Always use light base: include only perimeter bottom vertices to create outer walls
-        z_front = np.full_like(X[0, :], np.float32(wall_bottom_z), dtype=np.float32)
-        z_back = np.full_like(X[-1, :], np.float32(wall_bottom_z), dtype=np.float32)
-        z_left = np.full_like(X[:, 0], np.float32(wall_bottom_z), dtype=np.float32)
-        z_right = np.full_like(X[:, -1], np.float32(wall_bottom_z), dtype=np.float32)
-        front_bottom = np.stack((X[0, :], Y[0, :], z_front), axis=-1)
-        back_bottom = np.stack((X[-1, :], Y[-1, :], z_back), axis=-1)
-        left_bottom = np.stack((X[:, 0], Y[:, 0], z_left), axis=-1)
-        right_bottom = np.stack((X[:, -1], Y[:, -1], z_right), axis=-1)
+        # Sample rows to pick important x positions
+        tol = float(adaptive_tol)
+        for i in range(0, height, row_step):
+            z_row = elevation_data[i, :].astype(np.float32) * np.float32(elevation_scale) + np.float32(base_height)
+            keep_idx = rdp_indices_1d(xs, z_row, tol)
+            for j in keep_idx:
+                selected_cols.add(int(j))
+
+        # Sample columns to pick important y positions
+        for j in range(0, width, col_step):
+            z_col = elevation_data[:, j].astype(np.float32) * np.float32(elevation_scale) + np.float32(base_height)
+            keep_idx = rdp_indices_1d(ys, z_col, tol)
+            for i in keep_idx:
+                selected_rows.add(int(i))
+
+        # Sort unique indices
+        sel_cols = np.array(sorted(selected_cols), dtype=np.int32)
+        sel_rows = np.array(sorted(selected_rows), dtype=np.int32)
+
+        # Optional: cap maximum spacing to avoid over-large faces (insert midpoints if huge gaps)
+        def enforce_max_gap(indices: np.ndarray, max_gap: int) -> np.ndarray:
+            out = [int(indices[0])]
+            for k in range(1, len(indices)):
+                prev = int(out[-1])
+                cur = int(indices[k])
+                while cur - prev > max_gap:
+                    prev = prev + max_gap
+                    out.append(prev)
+                out.append(cur)
+            return np.array(out, dtype=np.int32)
+
+        # Avoid cells larger than a fraction of original resolution
+        max_gap_cols = max(2, int(round(width * float(adaptive_max_gap_fraction))))
+        max_gap_rows = max(2, int(round(height * float(adaptive_max_gap_fraction))))
+        sel_cols = enforce_max_gap(sel_cols, max_gap=max_gap_cols)
+        sel_rows = enforce_max_gap(sel_rows, max_gap=max_gap_rows)
+
+        nr = int(sel_rows.shape[0])
+        nc = int(sel_cols.shape[0])
+        output.info(f"Adaptive grid: {nc} x {nr} samples (from {width} x {height})")
+
+        # Build top vertices for adaptive grid
+        Xg = (sel_cols.astype(np.float32) * np.float32(scale_x))[None, :].repeat(nr, axis=0)
+        Yg = (sel_rows.astype(np.float32) * np.float32(scale_y))[:, None].repeat(nc, axis=1)
+        Zg = (elevation_data[sel_rows[:, None], sel_cols[None, :]].astype(np.float32) * np.float32(elevation_scale)
+              + np.float32(base_height))
+        top_vertices = np.stack((Xg, Yg, Zg), axis=-1).reshape(-1, 3)
+
+        # Walls: use perimeter of the adaptive grid
+        z_front = np.full((nc,), np.float32(wall_bottom_z), dtype=np.float32)
+        z_back = np.full((nc,), np.float32(wall_bottom_z), dtype=np.float32)
+        z_left = np.full((nr,), np.float32(wall_bottom_z), dtype=np.float32)
+        z_right = np.full((nr,), np.float32(wall_bottom_z), dtype=np.float32)
+        front_bottom = np.stack((Xg[0, :], Yg[0, :], z_front), axis=-1)
+        back_bottom = np.stack((Xg[-1, :], Yg[-1, :], z_back), axis=-1)
+        left_bottom = np.stack((Xg[:, 0], Yg[:, 0], z_left), axis=-1)
+        right_bottom = np.stack((Xg[:, -1], Yg[:, -1], z_right), axis=-1)
         perimeter_bottom = np.concatenate((front_bottom, back_bottom, left_bottom, right_bottom), axis=0)
         vertices_array = np.concatenate((top_vertices, perimeter_bottom), axis=0).astype(np.float32, copy=False)
 
-        # Vectorized face generation
-        i = np.arange(height - 1, dtype=np.int32)[:, None]  # (H-1, 1)
-        j = np.arange(width - 1, dtype=np.int32)[None, :]   # (1, W-1)
-        tl = i * width + j
+        # Faces for top surface over adaptive grid
+        i = np.arange(nr - 1, dtype=np.int32)[:, None]
+        j = np.arange(nc - 1, dtype=np.int32)[None, :]
+        tl = i * np.int32(nc) + j
         tr = tl + 1
-        bl = tl + width
+        bl = tl + np.int32(nc)
         br = bl + 1
-
         top_faces = np.stack([tl, tr, bl, tr, br, bl], axis=-1).reshape(-1, 3)
 
         faces_list = [top_faces]
 
-        # Always light base: construct walls using perimeter bottom vertices
-        offset = np.int32(height * width)
-        j1 = np.arange(width - 1, dtype=np.int32)
-        i1 = np.arange(height - 1, dtype=np.int32)
+        # Walls faces using perimeter indices
+        offset = np.int32(nr * nc)
+        j1 = np.arange(nc - 1, dtype=np.int32)
+        i1 = np.arange(nr - 1, dtype=np.int32)
 
-        # Index mapping for perimeter bottom vertices
-        # front: [0 .. width-1] -> offset + 0 .. offset + (width-1)
-        # back:  next width vertices -> offset + width .. offset + 2*width-1
-        # left:  next height vertices -> offset + 2*width .. offset + 2*width + (height-1)
-        # right: next height vertices -> offset + 2*width + height .. offset + 2*width + 2*height - 1
-
-        # Front edge (y=0)
+        # front edge (row 0)
         front_bottom_offset = offset
         front = np.stack([
             j1, front_bottom_offset + j1, j1 + 1,
@@ -573,78 +668,37 @@ class ModelGenerator:
         ], axis=-1).reshape(-1, 3)
         faces_list.append(front)
 
-        # Back edge (y=height-1)
-        back_row = np.int32((height - 1) * width)
-        back_bottom_offset = offset + np.int32(width)
+        # back edge (last row)
+        back_row = np.int32((nr - 1) * nc)
+        back_bottom_offset = offset + np.int32(nc)
         back = np.stack([
             back_row + j1, back_row + j1 + 1, back_bottom_offset + j1,
             back_row + j1 + 1, back_bottom_offset + j1 + 1, back_bottom_offset + j1
         ], axis=-1).reshape(-1, 3)
         faces_list.append(back)
 
-        # Left edge (x=0)
-        left_bottom_offset = offset + np.int32(2 * width)
+        # left edge (col 0)
+        left_bottom_offset = offset + np.int32(2 * nc)
         left = np.stack([
-            i1 * width, (i1 + 1) * width, left_bottom_offset + i1,
-            (i1 + 1) * width, left_bottom_offset + i1 + 1, left_bottom_offset + i1
+            i1 * np.int32(nc), (i1 + 1) * np.int32(nc), left_bottom_offset + i1,
+            (i1 + 1) * np.int32(nc), left_bottom_offset + i1 + 1, left_bottom_offset + i1
         ], axis=-1).reshape(-1, 3)
         faces_list.append(left)
 
-        # Right edge (x=width-1)
-        right_bottom_offset = offset + np.int32(2 * width + height)
+        # right edge (last col)
+        right_bottom_offset = offset + np.int32(2 * nc + nr)
         right = np.stack([
-            i1 * width + (width - 1), right_bottom_offset + i1, (i1 + 1) * width + (width - 1),
-            (i1 + 1) * width + (width - 1), right_bottom_offset + i1, right_bottom_offset + i1 + 1
+            i1 * np.int32(nc) + (nc - 1), right_bottom_offset + i1, (i1 + 1) * np.int32(nc) + (nc - 1),
+            (i1 + 1) * np.int32(nc) + (nc - 1), right_bottom_offset + i1, right_bottom_offset + i1 + 1
         ], axis=-1).reshape(-1, 3)
         faces_list.append(right)
 
         faces_array = np.concatenate(faces_list, axis=0).astype(np.int32, copy=False)
 
-        output.success(f"Generated mesh with {vertices_array.shape[0]} vertices and {faces_array.shape[0]} faces")
+        output.success(f"Generated adaptive mesh with {vertices_array.shape[0]} vertices and {faces_array.shape[0]} faces")
 
-        # Create the mesh using meshlib mrmeshnumpy
         mesh = mn.meshFromFacesVerts(faces_array, vertices_array)
-
         return mesh
-
-    def _decimate_mesh(
-        self,
-        mesh,
-        max_error: Optional[float] = None,
-        target_face_count: Optional[int] = None,
-        preserve_boundary: bool = True,
-        max_edge_length: Optional[float] = None,
-    ) -> None:
-        """
-        Optionally decimate the mesh if supported by meshlib, preserving boundaries.
-
-        Args:
-            mesh: meshlib.mrmeshpy.Mesh instance
-            max_error: Maximum geometric error in world units (meters)
-            target_face_count: Target number of faces
-            preserve_boundary: Preserve boundary edges if supported
-            max_edge_length: Optional edge length cap
-        """
-        try:
-            if hasattr(mr, "DecimateSettings") and hasattr(mr, "decimateMesh"):
-                settings = mr.DecimateSettings()
-                if max_error is not None and hasattr(settings, "maxError"):
-                    settings.maxError = float(max_error)
-                if target_face_count is not None and hasattr(settings, "targetFaceCount"):
-                    settings.targetFaceCount = int(target_face_count)
-                if hasattr(settings, "preserveBoundary"):
-                    settings.preserveBoundary = bool(preserve_boundary)
-                if max_edge_length is not None and hasattr(settings, "maxEdgeLen"):
-                    settings.maxEdgeLen = float(max_edge_length)
-
-                mr.decimateMesh(mesh, settings)
-                if hasattr(mr, "optimizeTopology"):
-                    mr.optimizeTopology(mesh)
-                output.success("Applied mesh decimation")
-            else:
-                output.warning("Mesh decimation not available in this meshlib build; skipping")
-        except Exception as e:
-            output.warning(f"Mesh decimation failed: {e}")
     
     def save_mesh(self, mesh, filename):
         """
@@ -669,10 +723,10 @@ class ModelGenerator:
         downsample_factor=10,
         water_threshold=None,
         force_refresh=False,
-        decimate: bool = False,
-        decimate_max_error: Optional[float] = None,
-        decimate_target_face_count: Optional[int] = None,
-        decimate_preserve_boundary: bool = True,
+        adaptive_tolerance_z: float = 1.0,
+        adaptive_max_gap_fraction: float = 1/256,
+        adaptive_max_sampled_rows: int = 400,
+        adaptive_max_sampled_cols: int = 400,
         split_at_water_level: bool = True,
         merge_land_and_base: bool = False,
     ):
@@ -708,9 +762,10 @@ class ModelGenerator:
                 elevation_multiplier,
                 downsample_factor,
                 water_threshold,
-                decimate,
-                decimate_max_error,
-                decimate_target_face_count,
+                float(adaptive_tolerance_z),
+                float(adaptive_max_gap_fraction),
+                int(adaptive_max_sampled_rows),
+                int(adaptive_max_sampled_cols),
                 split_at_water_level,
             )
             if cached_result is not None:
@@ -746,7 +801,15 @@ class ModelGenerator:
         else:
             wall_bottom_z = 0.0
         terrain = self._create_mesh_from_elevation(
-            elevation_data_for_mesh, bounds, base_height, elevation_multiplier, wall_bottom_z=wall_bottom_z
+            elevation_data_for_mesh,
+            bounds,
+            base_height,
+            elevation_multiplier,
+            wall_bottom_z=wall_bottom_z,
+            adaptive_tolerance_z=float(adaptive_tolerance_z),
+            adaptive_max_gap_fraction=float(adaptive_max_gap_fraction),
+            adaptive_max_sampled_rows=int(adaptive_max_sampled_rows),
+            adaptive_max_sampled_cols=int(adaptive_max_sampled_cols),
         )
 
         # Optionally split the terrain at water level and create base prism
@@ -768,16 +831,6 @@ class ModelGenerator:
                 )
         else:
             land, base = terrain, None
-
-        # Optional decimation of the land mesh
-        if decimate and land is not None:
-            output.subheader("Decimating land mesh")
-            self._decimate_mesh(
-                land,
-                max_error=decimate_max_error,
-                target_face_count=decimate_target_face_count,
-                preserve_boundary=decimate_preserve_boundary,
-            )
 
         # Optionally merge land and base into a single mesh for export
         merged_mesh = None
@@ -810,9 +863,10 @@ class ModelGenerator:
             elevation_multiplier,
             downsample_factor,
             water_threshold,
-            decimate,
-            decimate_max_error,
-            decimate_target_face_count,
+            float(adaptive_tolerance_z),
+            float(adaptive_max_gap_fraction),
+            int(adaptive_max_sampled_rows),
+            int(adaptive_max_sampled_cols),
             split_at_water_level,
             result,
         )

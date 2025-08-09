@@ -87,10 +87,11 @@ def _terrain_defaults() -> Dict[str, Any]:
         "downsample_factor": 1,
         "water_threshold": None,
         "force_refresh": False,
-        "decimate": False,
-        "decimate_max_error": None,
-        "decimate_target_face_count": None,
-        "decimate_preserve_boundary": True,
+        # Adaptive mesh controls (Z in meters)
+        "adaptive_tolerance_z": 1.0,            # controls simplification aggressiveness
+        "adaptive_max_gap_fraction": 1/256,      # max gap vs full resolution to avoid huge faces
+        "adaptive_max_sampled_rows": 400,        # cap rows sampled for RDP pre-selection
+        "adaptive_max_sampled_cols": 400,        # cap cols sampled for RDP pre-selection
         "split_at_water_level": True,
         "merge_land_and_base": False,
         # ModelGenerator ctor
@@ -184,16 +185,10 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
         elevation_multiplier=float(terrain_cfg["elevation_multiplier"]),
         downsample_factor=int(terrain_cfg["downsample_factor"]),
         force_refresh=bool(terrain_cfg["force_refresh"]),
-        decimate=bool(terrain_cfg["decimate"]),
-        decimate_max_error=(
-            None if terrain_cfg["decimate_max_error"] is None else float(terrain_cfg["decimate_max_error"])
-        ),
-        decimate_target_face_count=(
-            None
-            if terrain_cfg["decimate_target_face_count"] is None
-            else int(terrain_cfg["decimate_target_face_count"])
-        ),
-        decimate_preserve_boundary=bool(terrain_cfg["decimate_preserve_boundary"]),
+        adaptive_tolerance_z=float(terrain_cfg.get("adaptive_tolerance_z", 1.0)),
+        adaptive_max_gap_fraction=float(terrain_cfg.get("adaptive_max_gap_fraction", 1/256)),
+        adaptive_max_sampled_rows=int(terrain_cfg.get("adaptive_max_sampled_rows", 400)),
+        adaptive_max_sampled_cols=int(terrain_cfg.get("adaptive_max_sampled_cols", 400)),
         split_at_water_level=bool(terrain_cfg["split_at_water_level"]),
         merge_land_and_base=bool(terrain_cfg["merge_land_and_base"]),
     )

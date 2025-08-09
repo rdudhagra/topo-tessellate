@@ -32,7 +32,7 @@ The application uses SRTM (Shuttle Radar Topography Mission) data to generate ac
 - High-quality CAD models from SRTM elevation data
 - Support for STEP, STL, and 3MF formats
 - Water body representation
-- Parametric terrain modeling with CadQuery
+ - Adaptive meshing to reduce faces in flat/linear-slope regions (no runtime decimation)
 
 ### Beautiful Console Output 🎨
 - **Colorful Interface**: Rich terminal output with colors, icons, and formatting
@@ -116,6 +116,18 @@ The new console output will show you:
 - 📊 Formatted statistics tables  
 - ⚠️ Clear warnings and errors
 - 💾 Cache status and file operations
+
+### Adaptive Terrain Meshing
+
+Terrain meshes are constructed on an adaptive grid, which reduces rows/columns in areas that are flat or have consistent slope by applying a 1D Ramer–Douglas–Peucker (RDP) tolerance along rows and columns. This replaces the previous runtime decimation and is more stable at large scales.
+
+Tune under `terrain` in your YAML:
+
+- `adaptive_tolerance_z` (meters): Z tolerance for simplification; higher yields fewer faces (e.g., 1.0–5.0).
+- `adaptive_max_gap_fraction`: Max fraction of original resolution allowed as a single cell (default 1/256 ≈ 0.0039).
+- `adaptive_max_sampled_rows` / `adaptive_max_sampled_cols`: Cap for RDP sampling passes to bound runtime (default 400 each).
+
+Deprecated: `decimate`, `decimate_max_error`, `decimate_target_face_count`, `decimate_preserve_boundary` are removed.
 
 ### 3D-Ready Building Data Extraction
 
