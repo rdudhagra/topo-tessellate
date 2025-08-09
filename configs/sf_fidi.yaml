@@ -1,7 +1,6 @@
-# Minimal example using a GeoTIFF in `topo/`
 version: 1
-name: test_geotiff
-output_prefix: test_geotiff
+name: sf_fidi
+output_prefix: sf_fidi
 bounds: [-122.42846, 37.77723, -122.37645, 37.81792]
 
 elevation_source:
@@ -14,7 +13,9 @@ terrain:
   elevation_multiplier: 1
   downsample_factor: 1
   water_threshold: 1
-  decimate: false
+  decimate: true
+  decimate_target_face_count: 10000
+  decimate_preserve_boundary: true
   split_at_water_level: true
 
 buildings:
