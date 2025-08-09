@@ -1,5 +1,16 @@
 # World to Model - Terrain Generator
 
+## Unified YAML-driven generator
+
+Use `generate.py` with a YAML configuration to run one or multiple jobs:
+
+```
+python generate.py --config configs/test_srtm.yaml
+python generate.py --config configs/dc.yaml --job dc
+```
+
+See `configs/template.yaml` for a fully documented schema.
+
 A Python application to generate 3D CAD models of terrain from SRTM elevation data and extract 3D-ready building data from OpenStreetMap.
 
 ## Overview

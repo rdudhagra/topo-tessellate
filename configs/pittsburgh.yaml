@@ -1,0 +1,22 @@
+version: 1
+name: pittsburgh
+output_prefix: pittsburgh
+bounds: [-80.0557, 40.3881, -79.8541, 40.5135]
+
+elevation_source:
+  type: srtm
+  topo_dir: topo
+
+terrain:
+  base_height: 500
+  elevation_multiplier: 2
+  downsample_factor: 1
+  water_threshold: 61
+
+buildings:
+  enabled: false
+
+output:
+  directory: .
+
+

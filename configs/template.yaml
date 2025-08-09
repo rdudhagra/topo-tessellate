@@ -1,0 +1,124 @@
+# Template YAML for generate.py
+#
+# This file documents every supported parameter. You can:
+# - Use a SINGLE-JOB form: put parameters at the top-level (name, bounds, elevation_source, terrain, buildings, output)
+# - Use a MULTI-JOB form: put an array under `jobs:` and repeat those parameters per job
+#
+# CLI examples:
+#   python generate.py --config configs/template.yaml           # run all jobs (if any)
+#   python generate.py --config configs/template.yaml --job dc  # run a single job by name or output_prefix
+#   python generate.py --config configs/template.yaml --outdir outputs/all  # override output directory
+
+
+# ===========================
+# SINGLE-JOB (annotated)
+# ===========================
+# Uncomment and fill to use the single-job form. Otherwise, use `jobs:` below.
+#
+# version: 1                # REQUIRED. Config schema version. Use 1.
+# name: dc                  # OPTIONAL but recommended. Human-readable identifier. Also selectable via --job.
+# output_prefix: dc         # REQUIRED for predictable outputs. Prefix for filenames (e.g., dc_land.obj).
+#
+# bounds:                   # REQUIRED. Geographic bounding box in [min_lon, min_lat, max_lon, max_lat] (degrees).
+#   - -77.0728342158        #   min_lon (west). Negative for western hemisphere. Example: -77.07
+#   - 38.8349886875         #   min_lat (south). Positive for northern hemisphere. Example: 38.83
+#   - -76.9620071625        #   max_lon (east). Example: -76.96
+#   - 38.9178722916         #   max_lat (north). Example: 38.91
+#   # Tips:
+#   # - Keep areas modest on first runs to reduce memory/time. A few km² is reasonable.
+#   # - Use tools like map apps or GIS to read coordinates. Be mindful of lon/lat order.
+#
+# elevation_source:               # REQUIRED. Elevation data source settings.
+#   type: geotiff                 # REQUIRED. One of: "srtm" | "geotiff".
+#                                 #   srtm: reads SRTM tiles (*.hgt or .hgt.zip) located in topo_dir.
+#                                 #   geotiff: reads a GeoTIFF file clipped to bounds.
+#   topo_dir: topo                # REQUIRED. Directory with elevation assets (relative or absolute path).
+#   file: USGS_1M_10_x....tif     # REQUIRED if type=geotiff. Filename under topo_dir. No path separators.
+#                                 #   The GeoTIFF will be reprojected to EPSG:4326 if needed.
+#                                 #   If bounds exceed GeoTIFF extents, they will be clamped.
+#                                 #
+#                                 # SRTM TILE NOTES (type=srtm):
+#                                 # - Place tiles like N37W122.hgt.zip, N38W122.hgt.zip in topo_dir.
+#                                 # - The system stitches tiles and crops them to your bounds.
+#
+# terrain:                        # OPTIONAL. Controls terrain meshing; defaults shown where applicable.
+#   base_height: 250              # [meters] Z-offset of the base/platform under the terrain. Impacts wall height.
+#   elevation_multiplier: 3.5     # Vertical exaggeration factor. 1.0 = real-world vertical scale; >1 exaggerates relief.
+#   downsample_factor: 1          # Integer >=1. 1 keeps full resolution; higher values reduce resolution for speed/memory.
+#   water_threshold: 0            # [meters] Elevation below which is considered water. Used for flattening & splitting.
+#                                 #   null means: don't flatten or split by water level.
+#   force_refresh: false          # If true, ignore terrain cache and recompute terrain even if cached.
+#   decimate: false               # If true, attempt to reduce mesh face count via decimation (if supported by meshlib).
+#   decimate_max_error: null      # [meters] Max allowed geometric error during decimation. Example: 1.0 or 2.0.
+#   decimate_target_face_count: null  # Integer target faces. Example: 150000. Used alone or with max_error.
+#   decimate_preserve_boundary: true  # Preserve outer boundaries when decimating.
+#   split_at_water_level: true    # If true and water_threshold set, split terrain into land (above) and base (below).
+#   merge_land_and_base: false    # If true, produce a single merged mesh in-memory (see output.save_merged to write it).
+#   use_cache: true               # If true, cache terrain results in terrain_cache/ for faster repeat runs.
+#   cache_max_age_days: 30        # Max cache age before a miss.
+#
+# buildings:                      # OPTIONAL. Enable to extract OSM buildings and generate a buildings mesh.
+#   enabled: true                 # Master switch. When false, no building extraction or mesh is produced.
+#   timeout: 120                  # [seconds] Overpass API timeout per request.
+#   use_cache: true               # Cache extracted buildings under building_cache/.
+#   cache_max_age_days: 30        # Building cache recency requirement.
+#   extract:
+#     force_refresh: false        # If true, ignore building cache and fetch fresh data.
+#     max_building_distance_meters: 30  # Cluster radius for merging adjacent buildings. 0 disables clustering.
+#   generate:
+#     building_height_multiplier: 1.0   # Scales OSM/derived heights. 2.0 doubles heights.
+#     min_building_height: 10.0         # [meters] Lower bound to avoid ultra-thin buildings.
+#
+# output:
+#   directory: outputs/dc         # Directory to write .obj files (land, base, buildings, merged if enabled).
+#   save_merged: false            # If true and terrain.merge_land_and_base is true, also write the merged mesh.
+#   merged_filename: dc_merged.obj  # Optional custom name for merged mesh file.
+
+
+# ===========================
+# MULTI-JOB (annotated)
+# ===========================
+# Use this form to run multiple jobs in a single invocation. Each job accepts the
+# same parameters shown above for the single-job form.
+
+version: 1
+
+jobs: []
+
+# Example (commented):
+# jobs:
+#   - name: pittsburgh
+#     output_prefix: pittsburgh
+#     bounds: [-80.0557, 40.3881, -79.8541, 40.5135]
+#     elevation_source:
+#       type: srtm
+#       topo_dir: topo
+#     terrain:
+#       base_height: 500
+#       elevation_multiplier: 2
+#       downsample_factor: 1
+#       water_threshold: 61
+#       decimate: false
+#     buildings:
+#       enabled: false
+#     output:
+#       directory: outputs/pittsburgh
+#
+#   - name: newyork
+#     output_prefix: newyork
+#     bounds: [-74.1687, 40.5295, -73.7979, 40.9166]
+#     elevation_source:
+#       type: srtm
+#       topo_dir: topo
+#     terrain:
+#       base_height: 500
+#       elevation_multiplier: 3
+#       downsample_factor: 1
+#       water_threshold: 1
+#     buildings:
+#       enabled: false
+#     output:
+#       directory: outputs/newyork
+
+
+

@@ -1,0 +1,31 @@
+# Minimal example using a GeoTIFF in `topo/`
+version: 1
+name: test_geotiff
+output_prefix: test_geotiff
+bounds: [-122.42846, 37.77723, -122.37645, 37.81792]
+
+elevation_source:
+  type: geotiff
+  topo_dir: topo
+  file: USGS_1M_10_x55y419_CA_SanFrancisco_B23.tif
+
+terrain:
+  base_height: 150
+  elevation_multiplier: 1
+  downsample_factor: 1
+  water_threshold: 1
+  decimate: false
+  split_at_water_level: true
+
+buildings:
+  enabled: true
+  extract:
+    max_building_distance_meters: 35
+  generate:
+    building_height_multiplier: 1
+    min_building_height: 10
+
+output:
+  directory: .
+
+

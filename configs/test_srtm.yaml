@@ -1,0 +1,38 @@
+# Minimal working example using SRTM tiles in `topo/`
+version: 1
+name: test_srtm
+output_prefix: test
+bounds: [-122.42846, 37.77723, -122.37645, 37.81792]
+
+elevation_source:
+  type: srtm        # or geotiff
+  topo_dir: topo
+
+terrain:
+  base_height: 150
+  elevation_multiplier: 1
+  downsample_factor: 1
+  water_threshold: 1
+  force_refresh: false
+  decimate: false
+  split_at_water_level: true
+  merge_land_and_base: false
+  use_cache: true
+  cache_max_age_days: 30
+
+buildings:
+  enabled: true
+  timeout: 120
+  use_cache: true
+  cache_max_age_days: 30
+  extract:
+    force_refresh: false
+    max_building_distance_meters: 0  # 0 disables clustering/merging, like generate_test.py variant
+  generate:
+    building_height_multiplier: 1
+    min_building_height: 10
+
+output:
+  directory: .
+
+

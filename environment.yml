@@ -15,6 +15,7 @@ dependencies:
   - requests
   - rich>=13.0.0
   - scikit-image
+  - pyyaml
   - pip
   - pip:
     - git+https://github.com/JustinSDK/cqMore

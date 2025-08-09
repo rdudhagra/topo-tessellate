@@ -29,3 +29,6 @@ rich>=13.0.0
 # Optional: Development and testing
 pytest>=7.0.0
 black>=23.0.0 
+
+# YAML parsing
+PyYAML>=6.0.0
