@@ -19,12 +19,9 @@ import argparse
 import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
+import yaml  # type: ignore
 
-try:
-    import yaml  # type: ignore
-except Exception as exc:  # pragma: no cover
-    print("Missing dependency: PyYAML. Please install with: pip install PyYAML", file=sys.stderr)
-    raise
+import meshlib.mrmeshnumpy as mn  # type: ignore
 
 from terrain_generator.console import output
 from terrain_generator.modelgenerator import ModelGenerator
@@ -119,6 +116,15 @@ def _buildings_defaults() -> Dict[str, Any]:
     }
 
 
+def _tiling_defaults() -> Dict[str, Any]:
+    return {
+        "enabled": False,
+        "rows": 1,
+        "cols": 1,
+        "scale_max_length_mm": 200.0,
+    }
+
+
 def _merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(a)
     for k, v in (b or {}).items():
@@ -135,12 +141,34 @@ def _save_outputs(
     buildings_mesh: Optional[Any],
     out_dir: str,
     prefix: str,
+    bounds: Tuple[float, float, float, float],
+    scale_max_length_mm: float,
     output_cfg: Optional[Dict[str, Any]] = None,
 ) -> None:
     _ensure_dir(out_dir)
     land = result.get("land_mesh")
     base = result.get("base_mesh")
     merged = result.get("merged_mesh")
+    # Scale meshes to fit max length in mm (XY fit) before saving
+    try:
+        width_m, height_m = generator.elevation.calculate_bounds_dimensions_meters(bounds)
+        target_len_m = float(scale_max_length_mm) / 1000.0
+        denom = max(width_m, height_m) or 1.0
+        s = float(target_len_m) / float(denom)
+        if land is not None and s > 0 and s != 1.0:
+            verts = mn.getNumpyVerts(land)
+            verts *= s
+        if base is not None and s > 0 and s != 1.0:
+            verts_b = mn.getNumpyVerts(base)
+            verts_b *= s
+        if buildings_mesh is not None and s > 0 and s != 1.0:
+            verts_bld = mn.getNumpyVerts(buildings_mesh)
+            verts_bld *= s
+        if merged is not None and s > 0 and s != 1.0:
+            verts_m = mn.getNumpyVerts(merged)
+            verts_m *= s
+    except Exception as exc:
+        output.warning(f"Scaling failed or unavailable: {exc}")
     if land is not None:
         generator.save_mesh(land, os.path.join(out_dir, f"{prefix}_land.obj"))
     if base is not None:
@@ -176,56 +204,113 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
         cache_max_age_days=int(terrain_cfg.get("cache_max_age_days", 30)),
     )
 
-    # Generate terrain
-    result = generator.generate_terrain_model(
-        bounds=bounds,
-        topo_dir=topo_dir,
-        base_height=float(terrain_cfg["base_height"]),
-        water_threshold=terrain_cfg["water_threshold"],
-        elevation_multiplier=float(terrain_cfg["elevation_multiplier"]),
-        downsample_factor=int(terrain_cfg["downsample_factor"]),
-        force_refresh=bool(terrain_cfg["force_refresh"]),
-        adaptive_tolerance_z=float(terrain_cfg.get("adaptive_tolerance_z", 1.0)),
-        adaptive_max_gap_fraction=float(terrain_cfg.get("adaptive_max_gap_fraction", 1/256)),
-        adaptive_max_sampled_rows=int(terrain_cfg.get("adaptive_max_sampled_rows", 400)),
-        adaptive_max_sampled_cols=int(terrain_cfg.get("adaptive_max_sampled_cols", 400)),
-        split_at_water_level=bool(terrain_cfg["split_at_water_level"]),
-        merge_land_and_base=bool(terrain_cfg["merge_land_and_base"]),
-    )
+    # Tiling (separate section)
+    tiling_cfg = _merge(_tiling_defaults(), job_cfg.get("tiling", {}))
+    tile_enabled = bool(tiling_cfg.get("enabled", False))
+    tile_rows = max(1, int(tiling_cfg.get("rows", 1)))
+    tile_cols = max(1, int(tiling_cfg.get("cols", 1)))
 
-    # Buildings (optional)
-    buildings_cfg = _merge(_buildings_defaults(), job_cfg.get("buildings", {}))
-    buildings_mesh = None
-    if bool(buildings_cfg.get("enabled", False)):
+    def _gen(bounds_tile: Tuple[float, float, float, float]) -> Dict[str, Any]:
+        return generator.generate_terrain_model(
+            bounds=bounds_tile,
+            topo_dir=topo_dir,
+            base_height=float(terrain_cfg["base_height"]),
+            water_threshold=terrain_cfg["water_threshold"],
+            elevation_multiplier=float(terrain_cfg["elevation_multiplier"]),
+            downsample_factor=int(terrain_cfg["downsample_factor"]),
+            force_refresh=bool(terrain_cfg["force_refresh"]),
+            adaptive_tolerance_z=float(terrain_cfg.get("adaptive_tolerance_z", 1.0)),
+            adaptive_max_gap_fraction=float(terrain_cfg.get("adaptive_max_gap_fraction", 1/256)),
+            adaptive_max_sampled_rows=int(terrain_cfg.get("adaptive_max_sampled_rows", 400)),
+            adaptive_max_sampled_cols=int(terrain_cfg.get("adaptive_max_sampled_cols", 400)),
+            split_at_water_level=bool(terrain_cfg["split_at_water_level"]),
+            merge_land_and_base=bool(terrain_cfg["merge_land_and_base"]),
+        )
+
+    # Helper: per-tile buildings mesh generation
+    def _gen_buildings(bounds_tile: Tuple[float, float, float, float], elev_data) -> Optional[Any]:
+        buildings_cfg = _merge(_buildings_defaults(), job_cfg.get("buildings", {}))
+        if not bool(buildings_cfg.get("enabled", False)):
+            return None
         extractor = BuildingsExtractor(
             timeout=int(buildings_cfg.get("timeout", 120)),
             use_cache=bool(buildings_cfg.get("use_cache", True)),
             cache_max_age_days=int(buildings_cfg.get("cache_max_age_days", 30)),
         )
         buildings = extractor.extract_buildings(
-            bounds,
+            bounds_tile,
             force_refresh=bool(buildings_cfg["extract"].get("force_refresh", False)),
             max_building_distance_meters=float(
                 buildings_cfg["extract"].get("max_building_distance_meters", 35)
             ),
         )
         extractor.print_stats()
-
         bgen = BuildingsGenerator(elevation)
-        buildings_mesh = bgen.generate_buildings(
+        return bgen.generate_buildings(
             float(terrain_cfg["base_height"]),
-            result["elevation_data"],
+            elev_data,
             float(terrain_cfg["elevation_multiplier"]),
             float(buildings_cfg["generate"].get("building_height_multiplier", 1.0)),
-            bounds,
+            bounds_tile,
             buildings,
             min_building_height=float(buildings_cfg["generate"].get("min_building_height", 10.0)),
         )
 
+    # Result entries: (prefix, terrain_result, tile_bounds, buildings_mesh)
+    results: List[Tuple[str, Dict[str, Any], Tuple[float, float, float, float], Optional[Any]]] = []
+    if tile_enabled and (tile_rows > 1 or tile_cols > 1):
+        min_lon, min_lat, max_lon, max_lat = bounds
+        dlon = (max_lon - min_lon) / float(tile_cols)
+        dlat = (max_lat - min_lat) / float(tile_rows)
+        from concurrent.futures import ThreadPoolExecutor
+        # GeoTIFF elevation preprocessing is not thread-safe; restrict concurrency if using GeoTiff
+        max_workers = 1 if isinstance(elevation, GeoTiff) else min(8, tile_rows * tile_cols)
+        tasks = []
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            for r in range(tile_rows):
+                for c in range(tile_cols):
+                    t_bounds = (
+                        min_lon + c * dlon,
+                        min_lat + r * dlat,
+                        min_lon + (c + 1) * dlon,
+                        min_lat + (r + 1) * dlat,
+                    )
+                    t_prefix = f"{prefix}_r{r+1}c{c+1}"
+                    def _process_tile(tp=t_prefix, tb=t_bounds):
+                        try:
+                            tres = _gen(tb)
+                        except Exception as exc:
+                            output.warning(f"Skipping tile {tp}: {exc}")
+                            return None
+                        bmesh = _gen_buildings(tb, tres.get("elevation_data")) if (tres and "elevation_data" in tres) else None
+                        return (tp, tres, tb, bmesh)
+                    tasks.append(ex.submit(_process_tile))
+            for fut in tasks:
+                res_tuple = fut.result()
+                if res_tuple is None:
+                    continue
+                tp, tres, tb, bmesh = res_tuple
+                results.append((tp, tres, tb, bmesh))
+    else:
+        t_res = _gen(bounds)
+        bmesh = _gen_buildings(bounds, t_res["elevation_data"]) if t_res else None
+        results.append((prefix, t_res, bounds, bmesh))
+
     # Output
     output_cfg = job_cfg.get("output", {}) or {}
     out_dir = str(output_cfg.get("directory") or global_output_dir or ".")
-    _save_outputs(generator, result, buildings_mesh, out_dir, prefix, output_cfg)
+    # Save outputs for each (possibly tiled) result with scaling
+    for t_prefix, res, t_bounds, bmesh in results:
+        _save_outputs(
+            generator,
+            res,
+            bmesh,
+            out_dir,
+            t_prefix,
+            t_bounds,
+            float(tiling_cfg.get("scale_max_length_mm", 200.0)),
+            output_cfg,
+        )
 
     output.success(f"Completed: {name}")
 

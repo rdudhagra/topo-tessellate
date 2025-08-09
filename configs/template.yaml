@@ -53,6 +53,8 @@
 #   adaptive_max_gap_fraction: 0.0039  # Max fraction of original resolution allowed as a single cell (default 1/256)
 #   adaptive_max_sampled_rows: 400 # Max rows sampled for RDP selection; bounds runtime
 #   adaptive_max_sampled_cols: 400 # Max cols sampled for RDP selection; bounds runtime
+#   # Scaling
+#   scale_max_length_mm: 200.0      # Max XY length of output (mm). Mesh is uniformly scaled to fit this box.
 #   split_at_water_level: true    # If true and water_threshold set, split terrain into land (above) and base (below).
 #   merge_land_and_base: false    # If true, produce a single merged mesh in-memory (see output.save_merged to write it).
 #   use_cache: true               # If true, cache terrain results in terrain_cache/ for faster repeat runs.
@@ -70,6 +72,12 @@
 #     building_height_multiplier: 1.0   # Scales OSM/derived heights. 2.0 doubles heights.
 #     min_building_height: 10.0         # [meters] Lower bound to avoid ultra-thin buildings.
 #
+# tiling:                          # OPTIONAL. Controls tiling & per-tile scaling (exported per tile).
+#   enabled: false                 # If true, split bounds into a grid and export each tile separately.
+#   rows: 1                        # Number of tile rows
+#   cols: 1                        # Number of tile columns
+#   scale_max_length_mm: 200.0     # Each tile's XY is uniformly scaled to fit within this max length (mm)
+
 # output:
 #   directory: outputs/dc         # Directory to write .obj files (land, base, buildings, merged if enabled).
 #   save_merged: false            # If true and terrain.merge_land_and_base is true, also write the merged mesh.

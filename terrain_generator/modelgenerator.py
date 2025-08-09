@@ -415,10 +415,53 @@ class ModelGenerator:
         # Seal the newly-opened hole on the *kept* half
         output.progress_info("Sealing holes in above-water mesh...")
         hole_edges = terrain_mesh.topology.findHoleRepresentiveEdges()
-        if not hole_edges.empty():                     # C++ .empty() is exposed in Py
-            mr.fillContours2D(terrain_mesh, hole_edges)
+        if not hole_edges.empty():  # C++ .empty() is exposed in Py
+            sealed = False
+            plan_exc = fill_exc = contour_exc = None
+            # Preferred: plan-based fill for each detected hole
+            try:
+                if hasattr(mr, "getPlanarHoleFillPlans") and hasattr(mr, "executeHoleFillPlan"):
+                    plans = mr.getPlanarHoleFillPlans(terrain_mesh, hole_edges)
+                    # plans is a vector; execute all
+                    if plans and len(plans) > 0:
+                        for plan in plans:
+                            mr.executeHoleFillPlan(terrain_mesh, plan)
+                        sealed = True
+                
+            except Exception as exc:
+                plan_exc = exc
+                sealed = False
 
+            # Fallback: generic fillHoles given edges and params
+            if not sealed and hasattr(mr, "fillHoles"):
+                try:
+                    params = mr.FillHoleParams() if hasattr(mr, "FillHoleParams") else None
+                    if params is not None:
+                        mr.fillHoles(terrain_mesh, hole_edges, params)
+                    else:
+                        mr.fillHoles(terrain_mesh, hole_edges)
+                    sealed = True
+                except Exception as exc:
+                    fill_exc = exc
+                    sealed = False
+
+            # Last fallback: 2D contour fill (fails on self-intersections)
+            if not sealed and hasattr(mr, "fillContours2D"):
+                try:
+            mr.fillContours2D(terrain_mesh, hole_edges)
+                    sealed = True
+                except Exception as exc:
+                    contour_exc = exc
+                    sealed = False
+
+            if sealed:
         output.progress_info("Successfully sealed holes in above-water mesh")
+            else:
+                output.warning(
+                    f"Could not seal holes (plan: {plan_exc}; fillHoles: {fill_exc}; contours2D: {contour_exc}). Proceeding with open boundary."
+                )
+        else:
+            output.progress_info("No holes detected to seal")
 
         # Create below-water mesh as a simple rectangular prism
         output.progress_info("Creating below-water rectangular prism...")
