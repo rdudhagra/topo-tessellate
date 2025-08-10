@@ -12,7 +12,7 @@ elevation_source:
 terrain:
   base_height: 150
   elevation_multiplier: 1
-  downsample_factor: 5
+  downsample_factor: 1
   water_threshold: 1
   adaptive_tolerance_z: 10.0
   adaptive_max_gap_fraction: 0.001
@@ -21,7 +21,7 @@ terrain:
   split_at_water_level: true
 
 buildings:
-  enabled: false
+  enabled: true
   extract:
     max_building_distance_meters: 0
   generate:
@@ -30,8 +30,8 @@ buildings:
 
 tiling:
   enabled: true
-  rows: 1
-  cols: 1
+  rows: 3
+  cols: 3
   scale_max_length_mm: 200.0
 
 output:
