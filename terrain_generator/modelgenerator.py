@@ -414,8 +414,41 @@ class ModelGenerator:
 
         # Seal the newly-opened hole on the *kept* half
         output.progress_info("Sealing holes in above-water mesh...")
+        # Pre-clean hole boundaries to avoid self-intersections during triangulation
+        try:
+            # Duplicate vertices that appear on a hole boundary more than twice
+            dup_count = mr.duplicateMultiHoleVertices(terrain_mesh)
+            if dup_count:
+                output.info(f"Duplicated {dup_count} multi-hole boundary vertices")
+
+            # Remove faces that complicate holes (e.g., holes passing the same vertex multiple times)
+            complicating_faces = mr.findHoleComplicatingFaces(terrain_mesh)
+            has_faces = False
+            try:
+                if hasattr(complicating_faces, 'count') and callable(getattr(complicating_faces, 'count')):
+                    has_faces = complicating_faces.count() > 0
+                else:
+                    has_faces = len(complicating_faces) > 0  # type: ignore[arg-type]
+            except Exception:
+                # if BitSet does not support len(), try 'any()'
+                if hasattr(complicating_faces, 'any') and callable(getattr(complicating_faces, 'any')):
+                    has_faces = bool(complicating_faces.any())
+            if has_faces:
+                terrain_mesh.deleteFaces(complicating_faces)
+                output.info("Removed faces complicating holes")
+
+            # Weld near-duplicate boundary vertices to avoid tiny edges causing self-intersections
+            bbox_after_trim = terrain_mesh.computeBoundingBox()
+            close_dist = 1e-6 * bbox_after_trim.diagonal()
+            welded = mr.uniteCloseVertices(terrain_mesh, float(close_dist), True)
+            if welded:
+                output.info(f"Welded {welded} close boundary vertices")
+        except Exception as e:
+            output.warning(f"Hole pre-clean failed (continuing): {e}")
+
+        # Find holes and run fast planar fill
         hole_edges = terrain_mesh.topology.findHoleRepresentiveEdges()
-        if not hole_edges.empty():                     # C++ .empty() is exposed in Py
+        if not hole_edges.empty():  # C++ .empty() is exposed in Py
             mr.fillContours2D(terrain_mesh, hole_edges)
         else:
             output.warning("No holes found in above-water mesh")
