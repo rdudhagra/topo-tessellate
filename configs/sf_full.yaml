@@ -10,7 +10,6 @@ elevation_source:
   glob: "USGS_1M_10_*_CA_SanFrancisco_B23.tif"
 
 terrain:
-  base_height: 150
   elevation_multiplier: 1
   downsample_factor: 1
   water_threshold: 1

@@ -12,7 +12,6 @@ class BuildingsGenerator:
 
     def generate_buildings(
         self,
-        base_height: float,
         elevation_data: np.ndarray,
         elevation_multiplier: float,
         building_height_multiplier: float,
@@ -24,7 +23,6 @@ class BuildingsGenerator:
         Generate buildings in a separate mesh
 
         Args:
-            base_height (float): The height of the base mesh
             elevation_data (np.ndarray): The elevation data
             elevation_multiplier (float): The elevation multiplier
             building_height_multiplier (float): The building height multiplier
@@ -124,11 +122,7 @@ class BuildingsGenerator:
         all_chunks_mesh = mr.mergeMeshes(all_chunks_meshes)
 
         # Move the buildings mesh group to the correct position
-        all_chunks_mesh.transform(
-            mr.AffineXf3f.translation(
-                mr.Vector3f(0, 0, base_height)
-            )
-        )
+        # Base height has been removed; buildings are already placed at z relative to terrain (z=0 water plane)
 
         return all_chunks_mesh
 

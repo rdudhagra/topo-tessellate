@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml  # type: ignore
 
 import meshlib.mrmeshnumpy as mn  # type: ignore
+import meshlib.mrmeshpy as mr  # type: ignore
 
 from terrain_generator.console import output
 from terrain_generator.modelgenerator import ModelGenerator
@@ -84,7 +85,6 @@ def _build_elevation_source(cfg: Dict[str, Any]) -> Tuple[Any, str]:
 
 def _terrain_defaults() -> Dict[str, Any]:
     return {
-        "base_height": 500.0,
         "elevation_multiplier": 1.0,
         "downsample_factor": 1,
         "water_threshold": None,
@@ -95,7 +95,6 @@ def _terrain_defaults() -> Dict[str, Any]:
         "adaptive_max_sampled_rows": 400,        # cap rows sampled for RDP pre-selection
         "adaptive_max_sampled_cols": 400,        # cap cols sampled for RDP pre-selection
         "split_at_water_level": True,
-        "merge_land_and_base": False,
         # ModelGenerator ctor
         "use_cache": True,
         "cache_max_age_days": 30,
@@ -152,8 +151,6 @@ def _save_outputs(
 ) -> None:
     _ensure_dir(out_dir)
     land = result.get("land_mesh")
-    base = result.get("base_mesh")
-    merged = result.get("merged_mesh")
     # Scale meshes to fit max length in mm (XY fit) before saving
     try:
         width_m, height_m = generator.elevation.calculate_bounds_dimensions_meters(bounds)
@@ -163,26 +160,15 @@ def _save_outputs(
         if land is not None and s > 0 and s != 1.0:
             verts = mn.getNumpyVerts(land)
             verts *= s
-        if base is not None and s > 0 and s != 1.0:
-            verts_b = mn.getNumpyVerts(base)
-            verts_b *= s
         if buildings_mesh is not None and s > 0 and s != 1.0:
             verts_bld = mn.getNumpyVerts(buildings_mesh)
             verts_bld *= s
-        if merged is not None and s > 0 and s != 1.0:
-            verts_m = mn.getNumpyVerts(merged)
-            verts_m *= s
     except Exception as exc:
         output.warning(f"Scaling failed or unavailable: {exc}")
     if land is not None:
         generator.save_mesh(land, os.path.join(out_dir, f"{prefix}_land.obj"))
-    if base is not None:
-        generator.save_mesh(base, os.path.join(out_dir, f"{prefix}_base.obj"))
     if buildings_mesh is not None:
         generator.save_mesh(buildings_mesh, os.path.join(out_dir, f"{prefix}_buildings.obj"))
-    if merged is not None and output_cfg and bool(output_cfg.get("save_merged", False)):
-        merged_filename = str(output_cfg.get("merged_filename") or f"{prefix}_merged.obj")
-        generator.save_mesh(merged, os.path.join(out_dir, merged_filename))
 
 
 def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, only_prefix: Optional[str] = None) -> None:
@@ -219,7 +205,6 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
         return generator.generate_terrain_model(
             bounds=bounds_tile,
             topo_dir=topo_dir,
-            base_height=float(terrain_cfg["base_height"]),
             water_threshold=terrain_cfg["water_threshold"],
             elevation_multiplier=float(terrain_cfg["elevation_multiplier"]),
             downsample_factor=int(terrain_cfg["downsample_factor"]),
@@ -229,7 +214,6 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
             adaptive_max_sampled_rows=int(terrain_cfg.get("adaptive_max_sampled_rows", 400)),
             adaptive_max_sampled_cols=int(terrain_cfg.get("adaptive_max_sampled_cols", 400)),
             split_at_water_level=bool(terrain_cfg["split_at_water_level"]),
-            merge_land_and_base=bool(terrain_cfg["merge_land_and_base"]),
         )
 
     # Helper: per-tile buildings mesh generation
@@ -251,8 +235,7 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
         )
         extractor.print_stats()
         bgen = BuildingsGenerator(elevation)
-        return bgen.generate_buildings(
-            float(terrain_cfg["base_height"]),
+        bmesh = bgen.generate_buildings(
             elev_data,
             float(terrain_cfg["elevation_multiplier"]),
             float(buildings_cfg["generate"].get("building_height_multiplier", 1.0)),
@@ -260,6 +243,15 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
             buildings,
             min_building_height=float(buildings_cfg["generate"].get("min_building_height", 10.0)),
         )
+        # Align buildings with terrain if terrain was split and shifted to z=0 at water plane
+        try:
+            if bmesh is not None and bool(terrain_cfg.get("split_at_water_level", True)) and terrain_cfg.get("water_threshold") is not None:
+                plane_z = float(terrain_cfg["water_threshold"]) * float(terrain_cfg["elevation_multiplier"])
+                if plane_z != 0.0:
+                    bmesh.transform(mr.AffineXf3f.translation(mr.Vector3f(0, 0, -plane_z)))
+        except Exception as exc:
+            output.warning(f"Failed to align buildings to terrain z=0: {exc}")
+        return bmesh
 
     # Result entries: (prefix, terrain_result, tile_bounds, buildings_mesh)
     results: List[Tuple[str, Dict[str, Any], Tuple[float, float, float, float], Optional[Any]]] = []

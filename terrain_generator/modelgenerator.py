@@ -59,7 +59,7 @@ class ModelGenerator:
             Path(self.CACHE_DIR).mkdir(exist_ok=True)
 
     def _get_cache_filename(self, bounds: Tuple[float, float, float, float], 
-                           topo_dir: str, base_height: float, elevation_multiplier: float,
+                           topo_dir: str, elevation_multiplier: float,
                            downsample_factor: int, water_threshold: Optional[float],
                            adaptive_tolerance_z: float,
                            adaptive_max_gap_fraction: float,
@@ -71,7 +71,6 @@ class ModelGenerator:
         Args:
             bounds: (min_lon, min_lat, max_lon, max_lat) bounding box
             topo_dir: Directory containing SRTM data files
-            base_height: Height of the flat base
             elevation_multiplier: Multiplier for elevation scaling
             downsample_factor: Factor to downsample elevation data
             water_threshold: Elevation below which areas are considered water
@@ -81,7 +80,7 @@ class ModelGenerator:
         """
         # Create a string from all parameters that affect the result
         params_str = f"{bounds[0]:.6f}_{bounds[1]:.6f}_{bounds[2]:.6f}_{bounds[3]:.6f}"
-        params_str += f"_{topo_dir}_{base_height:.2f}_{elevation_multiplier:.2f}"
+        params_str += f"_{topo_dir}_{elevation_multiplier:.2f}"
         params_str += f"_{downsample_factor}_{water_threshold}"
         # Include adaptive meshing parameters
         params_str += f"_adtol{adaptive_tolerance_z}"
@@ -122,7 +121,7 @@ class ModelGenerator:
         return file_age < max_age_seconds
 
     def _save_to_cache(self, bounds: Tuple[float, float, float, float], 
-                       topo_dir: str, base_height: float, elevation_multiplier: float,
+                       topo_dir: str, elevation_multiplier: float,
                        downsample_factor: int, water_threshold: Optional[float],
                        adaptive_tolerance_z: float,
                        adaptive_max_gap_fraction: float,
@@ -135,7 +134,6 @@ class ModelGenerator:
         Args:
             bounds: Bounding box used for the query
             topo_dir: Directory containing SRTM data files
-            base_height: Height of the flat base
             elevation_multiplier: Multiplier for elevation scaling
             downsample_factor: Factor to downsample elevation data
             water_threshold: Elevation below which areas are considered water
@@ -147,7 +145,6 @@ class ModelGenerator:
         cache_file = self._get_cache_filename(
             bounds,
             topo_dir,
-            base_height,
             elevation_multiplier,
             downsample_factor,
             water_threshold,
@@ -161,7 +158,6 @@ class ModelGenerator:
         # Create base filename without extension for mesh files
         cache_base = cache_file.replace('.pkl.gz', '')
         land_mesh_file = f"{cache_base}_land.obj"
-        base_mesh_file = f"{cache_base}_base.obj"
 
         try:
             # Save meshes to separate files
@@ -169,15 +165,12 @@ class ModelGenerator:
                 mr.saveMesh(result['land_mesh'], land_mesh_file)
                 output.progress_info(f"Saved land mesh to {land_mesh_file}")
             
-            if 'base_mesh' in result and result['base_mesh'] is not None:
-                mr.saveMesh(result['base_mesh'], base_mesh_file)
-                output.progress_info(f"Saved base mesh to {base_mesh_file}")
+            # base mesh removed
 
             # Prepare cache data with mesh file paths instead of mesh objects
             cache_data = {
                 "bounds": bounds,
                 "topo_dir": topo_dir,
-                "base_height": base_height,
                 "elevation_multiplier": elevation_multiplier,
                 "downsample_factor": downsample_factor,
                 "water_threshold": water_threshold,
@@ -188,7 +181,6 @@ class ModelGenerator:
                 "split_at_water_level": split_at_water_level,
                 "elevation_data": result.get('elevation_data'),
                 "land_mesh_file": land_mesh_file if 'land_mesh' in result else None,
-                "base_mesh_file": base_mesh_file if 'base_mesh' in result else None,
                 "timestamp": time.time(),
                 "version": "1.0"
             }
@@ -201,7 +193,7 @@ class ModelGenerator:
         except Exception as e:
             output.warning(f"Could not save terrain cache: {e}")
             # Clean up partial mesh files if they were created
-            for mesh_file in [land_mesh_file, base_mesh_file]:
+            for mesh_file in [land_mesh_file]:
                 if os.path.exists(mesh_file):
                     try:
                         os.remove(mesh_file)
@@ -209,7 +201,7 @@ class ModelGenerator:
                         pass
 
     def _load_from_cache(self, bounds: Tuple[float, float, float, float], 
-                         topo_dir: str, base_height: float, elevation_multiplier: float,
+                         topo_dir: str, elevation_multiplier: float,
                          downsample_factor: int, water_threshold: Optional[float],
                          adaptive_tolerance_z: float,
                          adaptive_max_gap_fraction: float,
@@ -221,7 +213,6 @@ class ModelGenerator:
         Args:
             bounds: Bounding box for the query
             topo_dir: Directory containing SRTM data files
-            base_height: Height of the flat base
             elevation_multiplier: Multiplier for elevation scaling
             downsample_factor: Factor to downsample elevation data
             water_threshold: Elevation below which areas are considered water
@@ -235,7 +226,6 @@ class ModelGenerator:
         cache_file = self._get_cache_filename(
             bounds,
             topo_dir,
-            base_height,
             elevation_multiplier,
             downsample_factor,
             water_threshold,
@@ -257,7 +247,6 @@ class ModelGenerator:
             if (
                 cache_data.get("bounds") != bounds
                 or cache_data.get("topo_dir") != topo_dir
-                or cache_data.get("base_height") != base_height
                 or cache_data.get("elevation_multiplier") != elevation_multiplier
                 or cache_data.get("downsample_factor") != downsample_factor
                 or cache_data.get("water_threshold") != water_threshold
@@ -286,16 +275,7 @@ class ModelGenerator:
                     output.warning(f"Could not load land mesh from cache: {e}")
                     return None
 
-            # Load base mesh if it exists
-            base_mesh_file = cache_data.get('base_mesh_file')
-            if base_mesh_file and os.path.exists(base_mesh_file):
-                try:
-                    base_mesh = mr.loadMesh(base_mesh_file)
-                    result['base_mesh'] = base_mesh
-                    output.progress_info(f"Loaded base mesh from {base_mesh_file}")
-                except Exception as e:
-                    output.warning(f"Could not load base mesh from cache: {e}")
-                    return None
+            # base mesh removed
 
             cache_age_hours = (time.time() - cache_data["timestamp"]) / 3600
             output.cache_info(f"Loaded terrain generation result (age: {cache_age_hours:.1f} hours)")
@@ -324,7 +304,6 @@ class ModelGenerator:
                 
                 # Clear associated mesh files  
                 mesh_files = list(cache_dir.glob(f"terrain_*_{bounds_str}_*_land.obj"))
-                mesh_files.extend(list(cache_dir.glob(f"terrain_*_{bounds_str}_*_base.obj")))
                 
                 total_files = cache_files + mesh_files
                 for cache_file in total_files:
@@ -340,7 +319,6 @@ class ModelGenerator:
                 
                 # Clear mesh files
                 mesh_files = list(cache_dir.glob("terrain_*_land.obj"))
-                mesh_files.extend(list(cache_dir.glob("terrain_*_base.obj")))
                 
                 total_files = cache_files + mesh_files
                 for cache_file in total_files:
@@ -371,26 +349,22 @@ class ModelGenerator:
 
         return downsampled
 
-    def _split_mesh_at_water_level(self, terrain_mesh, water_level, bounds, base_height=1.0, elevation_multiplier=1.0):
+    def _split_mesh_at_water_level(self, terrain_mesh, water_level, elevation_multiplier=1.0):
         """
-        Split the terrain mesh into two parts at the water level using efficient cutting plane operations.
+        Split the terrain mesh at the water level and translate it so the water plane is at z=0.
 
         Args:
             terrain_mesh (meshlib.mrmeshpy.Mesh): The terrain mesh to split
             water_level (float): Elevation level at which to split the mesh
-            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
-            base_height (float): Height of the base
             elevation_multiplier (float): Elevation scaling multiplier
 
         Returns:
-            tuple: (above_water_mesh, below_water_mesh)
-                - above_water_mesh: Part of the terrain above water level with sealed base
-                - below_water_mesh: Rectangular prism representing the underwater base
+            meshlib.mrmeshpy.Mesh: Above-water terrain translated so water plane is z=0
         """
         output.subheader("Splitting terrain mesh at water level")
         
         # Convert water level to model units
-        plane_z = water_level * elevation_multiplier + base_height
+        plane_z = water_level * elevation_multiplier
         
         output.progress_info(f"Cutting plane at z = {plane_z:.2f}")
         
@@ -453,63 +427,16 @@ class ModelGenerator:
         else:
             output.warning("No holes found in above-water mesh")
 
-        # Create below-water mesh as a simple rectangular prism
-        output.progress_info("Creating below-water rectangular prism...")
-        below_water_mesh = self._create_rectangular_prism(bounds, base_height)
-        
-        output.success("Mesh splitting at water level complete!")
-        return terrain_mesh, below_water_mesh
-            
-    def _create_rectangular_prism(self, bounds, height):
-        """
-        Create a rectangular prism mesh for the below-water base.
-        
-        Args:
-            bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
-            height (float): Height of the prism (base_height)
-            
-        Returns:
-            meshlib.mrmeshpy.Mesh: Rectangular prism mesh
-        """
-        # Calculate real-world dimensions
-        width_meters, height_meters = self.elevation.calculate_bounds_dimensions_meters(bounds)
-        
-        # Create vertices for a rectangular prism
-        # Bottom face (z = 0)
-        vertices = np.array([
-            [0, 0, 0],                              # bottom-front-left
-            [width_meters, 0, 0],                   # bottom-front-right
-            [width_meters, height_meters, 0],       # bottom-back-right
-            [0, height_meters, 0],                  # bottom-back-left
-            # Top face (z = height)
-            [0, 0, height],                         # top-front-left
-            [width_meters, 0, height],              # top-front-right
-            [width_meters, height_meters, height],  # top-back-right
-            [0, height_meters, height]              # top-back-left
-        ], dtype=np.float32)
-        
-        # Create faces for the rectangular prism
-        faces = np.array([
-            # Bottom face (facing down)
-            [0, 2, 1], [0, 3, 2],
-            # Top face (facing up)  
-            [4, 5, 6], [4, 6, 7],
-            # Front face (y = 0)
-            [0, 1, 5], [0, 5, 4],
-            # Back face (y = height_meters)
-            [2, 3, 7], [2, 7, 6],
-            # Left face (x = 0)
-            [3, 0, 4], [3, 4, 7],
-            # Right face (x = width_meters)
-            [1, 2, 6], [1, 6, 5]
-        ], dtype=np.int32)
-        
-        # Create mesh using meshlib
-        prism_mesh = mn.meshFromFacesVerts(faces, vertices)
-        
-        output.progress_info(f"Created rectangular prism: {width_meters/1000:.2f} x {height_meters/1000:.2f} km x {height:.1f} m")
-        
-        return prism_mesh
+        # Translate the above-water mesh down so the cut plane aligns to z=0
+        try:
+            verts = mn.getNumpyVerts(terrain_mesh)
+            verts[:, 2] -= float(plane_z)
+            output.info(f"Translated above-water mesh by -{plane_z:.2f} along Z to align water level to z=0")
+        except Exception as e:
+            output.warning(f"Failed to translate mesh to z=0: {e}")
+
+        output.success("Mesh split and alignment to z=0 complete!")
+        return terrain_mesh
     
     def _flatten_water_level(self, elevation_data, water_threshold):
         """
@@ -530,7 +457,6 @@ class ModelGenerator:
         self,
         elevation_data,
         bounds,
-        base_height: float = 1.0,
         elevation_multiplier: float = 1.0,
         wall_bottom_z: float = 0.0,
         adaptive_tolerance_z: float = 1.0,
@@ -544,7 +470,6 @@ class ModelGenerator:
         Args:
             elevation_data (numpy.ndarray): 2D array of elevation values
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for real-world scaling
-            base_height (float): Height of the flat base
             elevation_multiplier (float): Multiplier for realistic elevation scaling (1.0 = realistic scale)
 
         Returns:
@@ -620,14 +545,14 @@ class ModelGenerator:
         # Sample rows to pick important x positions
         tol = float(adaptive_tol)
         for i in range(0, height, row_step):
-            z_row = elevation_data[i, :].astype(np.float32) * np.float32(elevation_scale) + np.float32(base_height)
+            z_row = elevation_data[i, :].astype(np.float32) * np.float32(elevation_scale)
             keep_idx = rdp_indices_1d(xs, z_row, tol)
             for j in keep_idx:
                 selected_cols.add(int(j))
 
         # Sample columns to pick important y positions
         for j in range(0, width, col_step):
-            z_col = elevation_data[:, j].astype(np.float32) * np.float32(elevation_scale) + np.float32(base_height)
+            z_col = elevation_data[:, j].astype(np.float32) * np.float32(elevation_scale)
             keep_idx = rdp_indices_1d(ys, z_col, tol)
             for i in keep_idx:
                 selected_rows.add(int(i))
@@ -661,8 +586,7 @@ class ModelGenerator:
         # Build top vertices for adaptive grid
         Xg = (sel_cols.astype(np.float32) * np.float32(scale_x))[None, :].repeat(nr, axis=0)
         Yg = (sel_rows.astype(np.float32) * np.float32(scale_y))[:, None].repeat(nc, axis=1)
-        Zg = (elevation_data[sel_rows[:, None], sel_cols[None, :]].astype(np.float32) * np.float32(elevation_scale)
-              + np.float32(base_height))
+        Zg = (elevation_data[sel_rows[:, None], sel_cols[None, :]].astype(np.float32) * np.float32(elevation_scale))
         top_vertices = np.stack((Xg, Yg, Zg), axis=-1).reshape(-1, 3)
 
         # Walls: use perimeter of the adaptive grid
@@ -751,7 +675,6 @@ class ModelGenerator:
         self,
         bounds,
         topo_dir="topo",
-        base_height=1.0,
         elevation_multiplier=1.0,
         downsample_factor=10,
         water_threshold=None,
@@ -761,7 +684,6 @@ class ModelGenerator:
         adaptive_max_sampled_rows: int = 400,
         adaptive_max_sampled_cols: int = 400,
         split_at_water_level: bool = True,
-        merge_land_and_base: bool = False,
     ):
         """
         Generate a 3D terrain model from SRTM elevation data.
@@ -769,7 +691,6 @@ class ModelGenerator:
         Args:
             bounds (tuple): (min_lon, min_lat, max_lon, max_lat) for the region
             topo_dir (str): Directory containing SRTM data files
-            base_height (float): Height of the flat base
             elevation_multiplier (float): Multiplier for realistic elevation scaling (1.0 = realistic scale)
             downsample_factor (int): Factor to downsample elevation data (default: 10)
             water_threshold (float, optional): Elevation below which areas are considered water
@@ -777,12 +698,8 @@ class ModelGenerator:
 
         Returns:
             dict: Dictionary containing generated meshes and data:
-                - 'terrain_mesh': The main terrain mesh (or above-water part if split)
-                - 'water_mesh': Water surface mesh (if extract_water=True)
-                - 'water_mask': Boolean array indicating water locations (if extract_water=True)
                 - 'elevation_data': The elevation data used
-                - 'below_water_mesh': Part of terrain below water level (if split_at_water_level=True)
-                - 'above_water_mesh': Part of terrain above water level (if split_at_water_level=True)
+                - 'land_mesh': Above-water terrain mesh translated so water plane is at z=0 (if split)
         """
         output.header("Terrain Model Generation", f"Bounds: {bounds}")
 
@@ -791,7 +708,6 @@ class ModelGenerator:
             cached_result = self._load_from_cache(
                 bounds,
                 topo_dir,
-                base_height,
                 elevation_multiplier,
                 downsample_factor,
                 water_threshold,
@@ -828,15 +744,11 @@ class ModelGenerator:
 
         # Create terrain mesh
         output.subheader("Creating terrain mesh")
-        # Determine wall bottom height for light_base to keep walls after split
-        if split_at_water_level and water_threshold is not None:
-            wall_bottom_z = float(water_threshold) * float(elevation_multiplier) + float(base_height)
-        else:
-            wall_bottom_z = 0.0
+        # Determine wall bottom height so after split and translation walls reach z=0
+        wall_bottom_z = float(water_threshold) * float(elevation_multiplier) if (split_at_water_level and water_threshold is not None) else 0.0
         terrain = self._create_mesh_from_elevation(
             elevation_data_for_mesh,
             bounds,
-            base_height,
             elevation_multiplier,
             wall_bottom_z=wall_bottom_z,
             adaptive_tolerance_z=float(adaptive_tolerance_z),
@@ -845,54 +757,34 @@ class ModelGenerator:
             adaptive_max_sampled_cols=int(adaptive_max_sampled_cols),
         )
 
-        # Optionally split the terrain at water level and create base prism
+        # Optionally split the terrain at water level and translate to z=0
         if split_at_water_level:
             output.subheader("Splitting terrain mesh at water level")
             if water_threshold is None:
                 output.warning("Water threshold is None; skipping split")
-                land, base = terrain, None
+                land = terrain
             else:
                 output.progress_info(
                     f"Splitting at water level: {water_threshold:.2f} meters"
                 )
-                land, base = self._split_mesh_at_water_level(
+                land = self._split_mesh_at_water_level(
                     terrain,
                     water_threshold,
-                    bounds,
-                    base_height,
                     elevation_multiplier,
                 )
         else:
-            land, base = terrain, None
-
-        # Optionally merge land and base into a single mesh for export
-        merged_mesh = None
-        if merge_land_and_base:
-            try:
-                meshes = mr.std_vector_std_shared_ptr_Mesh()
-                if land is not None:
-                    meshes.append(land)
-                if base is not None:
-                    meshes.append(base)
-                if len(meshes) > 0:
-                    merged_mesh = mr.mergeMeshes(meshes)
-                    output.success("Merged land and base into a single mesh")
-            except Exception as e:
-                output.warning(f"Failed to merge meshes: {e}")
+            land = terrain
 
         # Create result dictionary
         result = {
             'elevation_data': elevation_data,  # keep original (non-flattened) for downstream consumers
             'land_mesh': land,
-            'base_mesh': base,
-            'merged_mesh': merged_mesh,
         }
 
         # Save to cache
         self._save_to_cache(
             bounds,
             topo_dir,
-            base_height,
             elevation_multiplier,
             downsample_factor,
             water_threshold,
