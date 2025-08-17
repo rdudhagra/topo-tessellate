@@ -277,8 +277,7 @@ class BaseGenerator:
         cutout_front: bool = False,
         cutout_back: bool = False,
         cutout_path: Path | None = None,
-        output_path: Path | None = None,
-    ) -> Path:
+    ) -> mr.Mesh:
         """Generate a base with selective joint cutouts on specified sides.
 
         Args:
@@ -290,24 +289,17 @@ class BaseGenerator:
             cutout_front: Whether to add cutout on front side (z=0)
             cutout_back: Whether to add cutout on back side (z=width)
             cutout_path: Path to cutout STL file (defaults to joint_cutout.stl)
-            output_path: Output path for the generated OBJ file
 
         Returns:
-            Path to the generated OBJ file
+            mr.Mesh: The generated mesh with requested cutouts applied
         """
         root = Path(__file__).resolve().parents[1]
         if cutout_path is None:
             cutout_path = root / "joint_cutout.stl"
-        if output_path is None:
-            output_path = root / "analysis" / "generated_base.obj"
-        
-        # Ensure output directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
 
         output.header("Generating base with selective joint cutouts (Y-up)")
         output.info(f"Base size: {length_mm} × {width_mm} × {height_mm} mm")
         output.info(f"Cutout: {cutout_path}")
-        output.info(f"Output: {output_path}")
         
         # Create base box
         base = self.create_base_box(length_mm, width_mm, height_mm)
@@ -345,18 +337,14 @@ class BaseGenerator:
         else:
             output.info("No cutouts requested - generating plain base")
         
-        # Save result
-        mr.saveMesh(base, str(output_path))
-        output.file_saved(str(output_path), "mesh")
         output.success("Base generation complete")
-        
-        return output_path
+        return base
 
 
 if __name__ == "__main__":
     # Example usage - run from project root with: python -m terrain_generator.basegenerator
     gen = BaseGenerator()
-    result_path = gen.generate_base_with_cutouts(
+    base_mesh = gen.generate_base_with_cutouts(
         length_mm=250,
         width_mm=175,
         height_mm=20,
@@ -364,8 +352,12 @@ if __name__ == "__main__":
         cutout_right=True,
         cutout_front=True,
         cutout_back=True,
-        output_path=Path("analysis/example_base.obj")
     )
-    print(f"Generated base: {result_path}")
+    
+    # Caller handles saving the mesh
+    output_path = Path("analysis/example_base.obj")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    mr.saveMesh(base_mesh, str(output_path))
+    print(f"Generated base mesh and saved to: {output_path}")
 
 
