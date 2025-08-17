@@ -2,24 +2,20 @@
 """
 Base Generator
 
-Creates a rectangular prism base (length × width × height in millimeters, Z-up)
-and subtracts a provided cutout mesh on each side of the prism's bottom face.
+Creates a rectangular prism base (length × width × height in millimeters, Y-up)
+and selectively subtracts a provided cutout mesh on specified sides of the prism.
 
-Because the correct cutout orientation is unknown, this module generates a set
-of variants by trying multiple axis-up interpretations for the cutout (Z-up,
-Y-up, X-up) combined with yaw rotations around Z (0°, 90°, 180°, 270°).
+The cutout orientation and positioning parameters have been optimized through testing
+and are hardcoded for reliable results.
 
-Outputs are saved as OBJ files for visual inspection to decide which variant is
-correct.
+Outputs a single OBJ file with the requested cutouts applied.
 """
 
 from __future__ import annotations
 
 import math
-import os
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Literal, Tuple
+from typing import Literal
 
 import numpy as np
 
@@ -30,16 +26,6 @@ from .console import output
 
 
 AxisUp = Literal["z", "y", "x"]
-
-
-@dataclass
-class Variant:
-    axis_up: AxisUp
-    yaw_deg: int
-
-    @property
-    def name(self) -> str:
-        return f"up-{self.axis_up}_yaw-{self.yaw_deg}"
 
 
 class BaseGenerator:
@@ -281,116 +267,105 @@ class BaseGenerator:
         return mesh
 
     # ---------- main entry ----------
-    def generate_variants(
+    def generate_base_with_cutouts(
         self,
         length_mm: float,
         width_mm: float,
         height_mm: float = 20.0,
+        cutout_left: bool = False,
+        cutout_right: bool = False,
+        cutout_front: bool = False,
+        cutout_back: bool = False,
         cutout_path: Path | None = None,
-        output_dir: Path | None = None,
-    ) -> List[Tuple[Variant, Path]]:
-        """Generate Y-up base variants with joint cutouts on each side.
+        output_path: Path | None = None,
+    ) -> Path:
+        """Generate a base with selective joint cutouts on specified sides.
 
-        Creates rectangular prism base with joint cutouts positioned on each side wall.
-        Uses hardcoded optimal parameters determined through testing.
+        Args:
+            length_mm: Base length in millimeters (X-axis)
+            width_mm: Base width in millimeters (Z-axis)
+            height_mm: Base height in millimeters (Y-axis, default 20)
+            cutout_left: Whether to add cutout on left side (x=0)
+            cutout_right: Whether to add cutout on right side (x=length)
+            cutout_front: Whether to add cutout on front side (z=0)
+            cutout_back: Whether to add cutout on back side (z=width)
+            cutout_path: Path to cutout STL file (defaults to joint_cutout.stl)
+            output_path: Output path for the generated OBJ file
+
+        Returns:
+            Path to the generated OBJ file
         """
         root = Path(__file__).resolve().parents[1]
         if cutout_path is None:
             cutout_path = root / "joint_cutout.stl"
-        if output_dir is None:
-            output_dir = root / "analysis" / "base_variants"
-        output_dir.mkdir(parents=True, exist_ok=True)
+        if output_path is None:
+            output_path = root / "analysis" / "generated_base.obj"
+        
+        # Ensure output directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        output.header("Generating base with joint cutout variants (Y-up)")
+        output.header("Generating base with selective joint cutouts (Y-up)")
         output.info(f"Base size: {length_mm} × {width_mm} × {height_mm} mm")
         output.info(f"Cutout: {cutout_path}")
-        output.info(f"Output dir: {output_dir}")
-
-        results: List[Tuple[Variant, Path]] = []
-        edges = ("left", "right", "front", "back")
+        output.info(f"Output: {output_path}")
         
-        # Hardcoded optimal parameters
-        yaw_deg = 0  # Working yaw rotation
+        # Create base box
+        base = self.create_base_box(length_mm, width_mm, height_mm)
+        
+        # Hardcoded optimal parameters determined through testing
         cutout_up_axis = "z"  # Source cutout up axis
+        yaw_deg = 0  # Working yaw rotation
         flip_cutout_degrees = 180.0  # X-axis flip
         
-        for side in edges:
-            variant = Variant(axis_up=cutout_up_axis, yaw_deg=yaw_deg)
-            output.subheader(f"{side} edge")
+        # Apply cutouts for each requested side
+        sides_to_cut = []
+        if cutout_left:
+            sides_to_cut.append("left")
+        if cutout_right:
+            sides_to_cut.append("right")
+        if cutout_front:
+            sides_to_cut.append("front")
+        if cutout_back:
+            sides_to_cut.append("back")
+        
+        if sides_to_cut:
+            output.info(f"Applying cutouts to sides: {', '.join(sides_to_cut)}")
             
-            base = self.create_base_box(length_mm, width_mm, height_mm)
-            cut = self.load_cutout_mesh(cutout_path)
-            
-            # Orient cutout
-            self._orient_cutout_inplace(cut, cutout_up_axis, yaw_deg, flip_cutout_degrees)
-            self._position_cutout_on_side_inplace(cut, side, length_mm, width_mm)
-            
-            # Perform boolean subtraction
-            base = self._boolean_difference(base, cut)
-            
-            # Save result
-            out_path = output_dir / f"base_yup_h{int(height_mm)}_{side}.obj"
-            mr.saveMesh(base, str(out_path))
-            results.append((variant, out_path))
-            output.file_saved(str(out_path), "mesh")
-
-        output.success(f"Generated {len(results)} variant meshes")
-        return results
-
-
-def _parse_args(argv: List[str] | None = None):
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Generate base prism with joint cutout variants")
-    parser.add_argument("--length-mm", type=float, required=True, help="Base length in millimeters (X)")
-    parser.add_argument("--width-mm", type=float, required=True, help="Base width in millimeters (Y)")
-    parser.add_argument("--height-mm", type=float, default=20.0, help="Base height in millimeters (Z, default 20)")
-    parser.add_argument(
-        "--cutout",
-        type=str,
-        default=None,
-        help="Path to cutout mesh (OBJ). Defaults to repository root joint_cutout.obj",
-    )
-    parser.add_argument(
-        "--outdir",
-        type=str,
-        default=None,
-        help="Directory to write variant OBJ files (default: analysis/base_variants)",
-    )
-    parser.add_argument(
-        "--axis-up",
-        type=str,
-        default="z,y,x",
-        help="Comma-separated axis-up options to try from {z,y,x} (default: z,y,x)",
-    )
-    parser.add_argument(
-        "--yaws",
-        type=str,
-        default="0,90,180,270",
-        help="Comma-separated yaw degrees to try (default: 0,90,180,270)",
-    )
-    return parser.parse_args(argv)
-
-
-def main(argv: List[str] | None = None) -> int:
-    args = _parse_args(argv)
-    axis_up_opts: List[AxisUp] = [a.strip() for a in str(args.axis_up).split(",") if a.strip()]  # type: ignore[assignment]
-    yaw_opts: List[int] = [int(x.strip()) for x in str(args.yaws).split(",") if x.strip()]
-
-    gen = BaseGenerator()
-    gen.generate_variants(
-        float(args.length_mm),
-        float(args.width_mm),
-        float(args.height_mm),
-        Path(args.cutout) if args.cutout else None,
-        Path(args.outdir) if args.outdir else None,
-        axis_up_options=axis_up_opts,  # type: ignore[arg-type]
-        yaw_deg_options=yaw_opts,
-    )
-    return 0
+            for side in sides_to_cut:
+                output.subheader(f"Cutting {side} side")
+                
+                # Load and prepare cutout mesh
+                cut = self.load_cutout_mesh(cutout_path)
+                self._orient_cutout_inplace(cut, cutout_up_axis, yaw_deg, flip_cutout_degrees)
+                self._position_cutout_on_side_inplace(cut, side, length_mm, width_mm)
+                
+                # Perform boolean subtraction
+                base = self._boolean_difference(base, cut)
+                output.info(f"✓ {side} cutout applied")
+        else:
+            output.info("No cutouts requested - generating plain base")
+        
+        # Save result
+        mr.saveMesh(base, str(output_path))
+        output.file_saved(str(output_path), "mesh")
+        output.success("Base generation complete")
+        
+        return output_path
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Example usage - run from project root with: python -m terrain_generator.basegenerator
+    gen = BaseGenerator()
+    result_path = gen.generate_base_with_cutouts(
+        length_mm=250,
+        width_mm=175,
+        height_mm=20,
+        cutout_left=True,
+        cutout_right=True,
+        cutout_front=True,
+        cutout_back=True,
+        output_path=Path("analysis/example_base.obj")
+    )
+    print(f"Generated base: {result_path}")
 
 
