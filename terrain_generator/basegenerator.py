@@ -119,23 +119,8 @@ class BaseGenerator:
         c, s = math.cos(rad), math.sin(rad)
         return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=np.float32)
 
-    @staticmethod
-    def _apply_rotation_inplace(verts: np.ndarray, R: np.ndarray) -> None:
-        # verts: (N,3), R: (3,3) — in-place transform
-        verts[:] = verts @ R.T
-
-    @staticmethod
-    def _apply_translation_inplace(verts: np.ndarray, t: Tuple[float, float, float]) -> None:
-        verts[:] = verts + np.array(t, dtype=np.float32)[None, :]
-
-    @staticmethod
-    def _bbox_from_numpy(verts: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        vmin = verts.min(axis=0)
-        vmax = verts.max(axis=0)
-        return vmin, vmax
-
     # ---------- positioning logic ----------
-    def _orient_cutout_inplace(self, cutout: mr.Mesh, axis_up: AxisUp, yaw_deg: int, y_penetration_mm: float = 2.0, flip_cutout_degrees: float = 0.0) -> None:
+    def _orient_cutout_inplace(self, cutout: mr.Mesh, axis_up: AxisUp, yaw_deg: int, flip_cutout_degrees: float) -> None:
         """Rotate cutout so that its 'up' axis maps to world Y (Y-up), then yaw around Y."""
         
         # Map source up axis to world Y
@@ -189,9 +174,9 @@ class BaseGenerator:
         )
         cutout.transform(mr.AffineXf3f(R_y180, mr.Vector3f(0, 0, 0)))
 
-        # Place bottom of cutout slightly below y=0 to ensure volumetric intersection (boolean robustness)
+        # Place bottom of cutout at y=0
         bbox = cutout.computeBoundingBox()
-        y_offset = -float(bbox.min.y) - float(y_penetration_mm)
+        y_offset = -float(bbox.min.y)
         cutout.transform(mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(0, y_offset, 0)))
 
     def _position_cutout_on_side_inplace(
@@ -200,7 +185,6 @@ class BaseGenerator:
         side: Literal["left", "right", "front", "back"],
         length_mm: float,
         width_mm: float,
-        embed_inside_mm: float = 15.0,
     ) -> None:
         """Position cutout on the specified side with appropriate rotation and embedding.
         
@@ -239,110 +223,35 @@ class BaseGenerator:
         center_x = 0.5 * (float(bbox.min.x) + float(bbox.max.x))  # X center
         center_z = 0.5 * (float(bbox.min.z) + float(bbox.max.z))  # Z center
 
-        embed = float(embed_inside_mm)
-        # Use small epsilon to ensure face gets cut without significantly changing cutout size
-        face_cut_epsilon = -0.5  # mm - small extension to ensure boolean intersection
+        # Hardcoded optimal values determined through testing
+        face_cut_epsilon = -0.5  # mm - optimal epsilon for boolean intersection
         
         if side == "left":
             # Position on left side (x=0), ensure cutout extends into base
-            dx = (embed + face_cut_epsilon) - float(bbox.min.x)
+            dx = face_cut_epsilon - float(bbox.min.x)
             dz = (width_mm * 0.5) - center_z
         elif side == "right":
             # Position on right side (x=length), ensure cutout extends into base
-            dx = (length_mm - embed - face_cut_epsilon) - float(bbox.max.x)
+            dx = (length_mm - face_cut_epsilon) - float(bbox.max.x)
             dz = (width_mm * 0.5) - center_z
         elif side == "front":
             # Position on front side (z=0), ensure cutout extends into base
             dx = (length_mm * 0.5) - center_x
-            dz = (embed + face_cut_epsilon) - float(bbox.min.z)
+            dz = face_cut_epsilon - float(bbox.min.z)
         elif side == "back":
             # Position on back side (z=width), ensure cutout extends into base
             dx = (length_mm * 0.5) - center_x
-            dz = (width_mm - embed - face_cut_epsilon) - float(bbox.max.z)
+            dz = (width_mm - face_cut_epsilon) - float(bbox.max.z)
 
         cutout.transform(mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(dx, 0.0, dz)))
 
-    def _position_cutout_touch_edge_center_inplace(
-        self,
-        cutout: mr.Mesh,
-        side: Literal["left", "right", "front", "back"],
-        length_mm: float,
-        width_mm: float,
-    ) -> None:
-        """Translate oriented cutout so it touches the given edge (on bottom face) and is centered on that edge, Y-up.
 
-        - left:  move so min_x = 0, center_z = width/2
-        - right: move so max_x = length, center_z = width/2
-        - front: move so min_z = 0, center_x = length/2
-        - back:  move so max_z = width, center_x = length/2
-        """
-        verts = mn.getNumpyVerts(cutout)
-        vmin, vmax = self._bbox_from_numpy(verts)
-        center_x = 0.5 * float(vmin[0] + vmax[0])
-        center_z = 0.5 * float(vmin[2] + vmax[2])
 
-        if side == "left":
-            dx = -float(vmin[0])  # min_x -> 0
-            dz = (float(width_mm) * 0.5) - center_z
-        elif side == "right":
-            dx = float(length_mm) - float(vmax[0])  # max_x -> length
-            dz = (float(width_mm) * 0.5) - center_z
-        elif side == "front":
-            dx = (float(length_mm) * 0.5) - center_x
-            dz = -float(vmin[2])  # min_z -> 0
-        elif side == "back":
-            dx = (float(length_mm) * 0.5) - center_x
-            dz = float(width_mm) - float(vmax[2])  # max_z -> width
-        else:
-            raise ValueError(f"Unknown side: {side}")
 
-        self._apply_translation_inplace(verts, (dx, 0.0, dz))
 
-    @staticmethod
-    def _scale_uniform_inplace(mesh: mr.Mesh, scale: float) -> None:
-        if scale and scale != 1.0:
-            verts = mn.getNumpyVerts(mesh)
-            vmin = verts.min(axis=0)
-            vmax = verts.max(axis=0)
-            center = 0.5 * (vmin + vmax)
-            verts[:] = (verts - center) * float(scale) + center
 
-    def _apply_inward_offset_inplace(
-        self,
-        mesh: mr.Mesh,
-        side: Literal["left", "right", "front", "back"],
-        inward_mm: float,
-    ) -> None:
-        if not inward_mm:
-            return
-        dx = dz = 0.0
-        if side == "left":
-            dx = float(inward_mm)  # inside +X
-        elif side == "right":
-            dx = -float(inward_mm)  # inside -X
-        elif side == "front":
-            dz = float(inward_mm)  # inside +Z
-        elif side == "back":
-            dz = -float(inward_mm)  # inside -Z
-        verts = mn.getNumpyVerts(mesh)
-        self._apply_translation_inplace(verts, (dx, 0.0, dz))
 
-    def _repair_cutout_inplace(self, cutout: mr.Mesh) -> None:
-        """Repair the cutout mesh to be watertight and robust for boolean."""
-        try:
-            holes = cutout.topology.findHoleRepresentiveEdges()
-            if not holes.empty():
-                mr.fillHoles(cutout, holes)
-        except Exception:
-            pass
-        try:
-            bbox = cutout.computeBoundingBox()
-            diag = float(bbox.diagonal()) or 1.0
-            mr.uniteCloseVertices(cutout, float(diag) * 1e-6, True)
-            params = mr.FixMeshDegeneraciesParams()
-            mr.fixMeshDegeneracies(cutout, params)
-        except Exception:
-            pass
+
 
     # ---------- boolean helpers ----------
     def _boolean_difference(self, base: mr.Mesh, cutter: mr.Mesh) -> mr.Mesh:
@@ -379,23 +288,15 @@ class BaseGenerator:
         height_mm: float = 20.0,
         cutout_path: Path | None = None,
         output_dir: Path | None = None,
-        yaw_deg_options: Iterable[int] = (0, 90, 180, 270),
-        embed_mm: float = 0.0,
-        cutout_up_axis: AxisUp = "z",
-        flip_model_degrees: float = 180.0,
-        flush_epsilon_mm: float = 0.05,
     ) -> List[Tuple[Variant, Path]]:
-        """Generate Y-up variants: cutout centered on each side plane with given yaw.
+        """Generate Y-up base variants with joint cutouts on each side.
 
-        - X = length, Y = height (up), Z = width
-        - Places cutout at each side (left/right/front/back) centered, with embed_mm inward
-        - Uses pure geometric boolean (DifferenceAB)
+        Creates rectangular prism base with joint cutouts positioned on each side wall.
+        Uses hardcoded optimal parameters determined through testing.
         """
         root = Path(__file__).resolve().parents[1]
         if cutout_path is None:
-            # prefer STL if present
-            stl = root / "joint_cutout.stl"
-            cutout_path = stl if stl.exists() else (root / "joint_cutout.obj")
+            cutout_path = root / "joint_cutout.stl"
         if output_dir is None:
             output_dir = root / "analysis" / "base_variants"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -406,26 +307,32 @@ class BaseGenerator:
         output.info(f"Output dir: {output_dir}")
 
         results: List[Tuple[Variant, Path]] = []
-        # Primary simple flow only: embed on each side, try yaws
         edges = ("left", "right", "front", "back")
+        
+        # Hardcoded optimal parameters
+        yaw_deg = 0  # Working yaw rotation
+        cutout_up_axis = "z"  # Source cutout up axis
+        flip_cutout_degrees = 180.0  # X-axis flip
+        
         for side in edges:
-            for yaw in yaw_deg_options:
-                variant = Variant(axis_up=cutout_up_axis, yaw_deg=int(yaw))
-                output.subheader(f"{side} edge, yaw {yaw} (cutout flip {flip_model_degrees}°)")
-                base = self.create_base_box(length_mm, width_mm, height_mm)
-                cut = self.load_cutout_mesh(cutout_path)
-                # Repair and orient
-                self._repair_cutout_inplace(cut)
-                
-                self._orient_cutout_inplace(cut, axis_up=cutout_up_axis, yaw_deg=int(yaw), flip_cutout_degrees=float(flip_model_degrees))
-                # Place flush (faces aligned) at side center; use tiny inward epsilon to ensure boolean overlap
-                embed_to_use = float(embed_mm) if float(embed_mm) > 0 else float(flush_epsilon_mm)
-                self._position_cutout_on_side_inplace(cut, side, length_mm, width_mm, embed_inside_mm=embed_to_use)
-                base = self._boolean_difference(base, cut)
-                out_path = output_dir / f"base_yup_h{int(height_mm)}_embed{int(embed_mm)}_{side}_yaw{int(yaw)}.obj"
-                mr.saveMesh(base, str(out_path))
-                results.append((variant, out_path))
-                output.file_saved(str(out_path), "mesh")
+            variant = Variant(axis_up=cutout_up_axis, yaw_deg=yaw_deg)
+            output.subheader(f"{side} edge")
+            
+            base = self.create_base_box(length_mm, width_mm, height_mm)
+            cut = self.load_cutout_mesh(cutout_path)
+            
+            # Orient cutout
+            self._orient_cutout_inplace(cut, cutout_up_axis, yaw_deg, flip_cutout_degrees)
+            self._position_cutout_on_side_inplace(cut, side, length_mm, width_mm)
+            
+            # Perform boolean subtraction
+            base = self._boolean_difference(base, cut)
+            
+            # Save result
+            out_path = output_dir / f"base_yup_h{int(height_mm)}_{side}.obj"
+            mr.saveMesh(base, str(out_path))
+            results.append((variant, out_path))
+            output.file_saved(str(out_path), "mesh")
 
         output.success(f"Generated {len(results)} variant meshes")
         return results
