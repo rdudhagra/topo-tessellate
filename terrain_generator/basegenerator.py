@@ -267,6 +267,74 @@ class BaseGenerator:
                 raise RuntimeError("Boolean produced no change")
         return mesh
 
+    def _apply_cleat_cutout(
+        self, 
+        base: mr.Mesh, 
+        cleat_cut: mr.Mesh, 
+        length_mm: float, 
+        width_mm: float,
+        rotation_z_deg: float = 0.0,
+        offset_x_mm: float = 0.0,
+        offset_y_mm: float = 0.0,
+        offset_z_mm: float = -0.5,
+        flip_y_deg: float = 180.0
+    ) -> mr.Mesh:
+        """Apply cleat cutout to the bottom face of the base.
+        
+        Args:
+            base: Base mesh to cut
+            cleat_cut: Cleat cutout mesh
+            length_mm: Base length for centering
+            width_mm: Base width for centering  
+            rotation_z_deg: Rotation around Z-axis in degrees (default 0)
+            offset_x_mm: X offset from center in mm (default 0)
+            offset_y_mm: Y offset from center in mm (default 0)
+            offset_z_mm: Z offset to ensure cutting (default -0.5mm)
+            flip_y_deg: Rotation around Y-axis in degrees (default 180)
+        """
+        # Apply Y-axis flip FIRST (180deg around Y-axis for optimal orientation)
+        if abs(flip_y_deg) > 1e-6:
+            rad_y = math.radians(flip_y_deg)
+            cos_y, sin_y = math.cos(rad_y), math.sin(rad_y)
+            R_y = mr.Matrix3f()
+            R_y.x.x, R_y.x.y, R_y.x.z = cos_y, 0.0, sin_y
+            R_y.y.x, R_y.y.y, R_y.y.z = 0.0, 1.0, 0.0
+            R_y.z.x, R_y.z.y, R_y.z.z = -sin_y, 0.0, cos_y
+            cleat_cut.transform(mr.AffineXf3f(R_y, mr.Vector3f()))
+        
+        # Apply rotation around Z-axis SECOND (around cleat's center after Y-flip)
+        if abs(rotation_z_deg) > 1e-6:
+            rad = math.radians(rotation_z_deg)
+            cos_r, sin_r = math.cos(rad), math.sin(rad)
+            R = mr.Matrix3f()
+            R.x.x, R.x.y, R.x.z = cos_r, -sin_r, 0.0
+            R.y.x, R.y.y, R.y.z = sin_r, cos_r, 0.0
+            R.z.x, R.z.y, R.z.z = 0.0, 0.0, 1.0
+            cleat_cut.transform(mr.AffineXf3f(R, mr.Vector3f()))
+        
+        # Now get bbox after rotation and calculate translation
+        cleat_bbox = cleat_cut.computeBoundingBox()
+        
+        # Center X,Y and align bottom face with base bottom (z=0 + small offset)
+        center_x = length_mm / 2.0 + offset_x_mm
+        center_y = width_mm / 2.0 + offset_y_mm
+        center_z = offset_z_mm  # Small negative offset to ensure cutting
+        
+        # Calculate translation to center the cleat
+        cleat_center_x = (cleat_bbox.min.x + cleat_bbox.max.x) / 2.0
+        cleat_center_y = (cleat_bbox.min.y + cleat_bbox.max.y) / 2.0
+        cleat_bottom_z = cleat_bbox.min.z
+        
+        translate_x = center_x - cleat_center_x
+        translate_y = center_y - cleat_center_y
+        translate_z = center_z - cleat_bottom_z
+        
+        # Apply translation
+        cleat_cut.transform(mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(translate_x, translate_y, translate_z)))
+        
+        # Perform boolean difference
+        return self._boolean_difference(base, cleat_cut)
+
     # ---------- main entry ----------
     def generate_base_with_cutouts(
         self,
@@ -277,19 +345,23 @@ class BaseGenerator:
         cutout_right: bool = False,
         cutout_front: bool = False,
         cutout_back: bool = False,
+        cutout_cleat: bool = True,
         cutout_path: Path | None = None,
+        cleat_cutout_path: Path | None = None,
     ) -> mr.Mesh:
-        """Generate a base with selective joint cutouts on specified sides.
+        """Generate a base with selective joint cutouts on specified sides and optional cleat cutout on bottom.
 
         Args:
             length_mm: Base length in millimeters (X-axis)
-            width_mm: Base width in millimeters (Z-axis)
-            height_mm: Base height in millimeters (Y-axis, default 20)
+            width_mm: Base width in millimeters (Y-axis)
+            height_mm: Base height in millimeters (Z-axis, default 20)
             cutout_left: Whether to add cutout on left side (x=0)
             cutout_right: Whether to add cutout on right side (x=length)
-            cutout_front: Whether to add cutout on front side (z=0)
-            cutout_back: Whether to add cutout on back side (z=width)
-            cutout_path: Path to cutout STL file (defaults to joint_cutout.stl)
+            cutout_front: Whether to add cutout on front side (y=0)
+            cutout_back: Whether to add cutout on back side (y=width)
+            cutout_cleat: Whether to add cleat cutout on bottom face (z=0, default True)
+            cutout_path: Path to joint cutout STL file (defaults to joint_cutout.stl)
+            cleat_cutout_path: Path to cleat cutout STL file (defaults to cleat_cutout.stl)
 
         Returns:
             mr.Mesh: The generated mesh with requested cutouts applied
@@ -297,10 +369,14 @@ class BaseGenerator:
         root = Path(__file__).resolve().parents[1]
         if cutout_path is None:
             cutout_path = root / "joint_cutout.stl"
+        if cleat_cutout_path is None:
+            cleat_cutout_path = root / "cleat_cutout.stl"
 
         output.header("Generating base with selective joint cutouts (Z-up)")
         output.info(f"Base size: {length_mm} × {width_mm} × {height_mm} mm")
-        output.info(f"Cutout: {cutout_path}")
+        output.info(f"Joint cutout: {cutout_path}")
+        if cutout_cleat:
+            output.info(f"Cleat cutout: {cleat_cutout_path}")
         
         # Create base box
         base = self.create_base_box(length_mm, width_mm, height_mm)
@@ -336,7 +412,24 @@ class BaseGenerator:
                 base = self._boolean_difference(base, cut)
                 output.info(f"✓ {side} cutout applied")
         else:
-            output.info("No cutouts requested - generating plain base")
+            output.info("No side cutouts requested")
+        
+        # Apply cleat cutout on bottom face if requested
+        if cutout_cleat:
+            output.subheader("Cutting cleat on bottom face")
+            
+            # Load cleat cutout mesh
+            cleat_cut = self.load_cutout_mesh(cleat_cutout_path)
+            
+            # Apply cleat cutout with optimal parameters (center 0deg + 180deg Y-axis flip)
+            base = self._apply_cleat_cutout(
+                base, cleat_cut, length_mm, width_mm,
+                rotation_z_deg=0.0,  # Center 0deg orientation
+                offset_x_mm=0.0,     # Centered X
+                offset_y_mm=0.0,     # Centered Y
+                flip_y_deg=180.0     # 180deg rotation around Y-axis
+            )
+            output.info("✓ cleat cutout applied")
         
         output.success("Base generation complete")
         return base

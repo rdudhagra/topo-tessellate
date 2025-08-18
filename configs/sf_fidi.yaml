@@ -7,7 +7,7 @@ global:
   scale_max_length_mm: 200.0
 
 base:
-  height: 10.0
+  height: 20.0
 
 elevation_source:
   type: geotiff
