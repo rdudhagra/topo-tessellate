@@ -3,6 +3,12 @@ name: sf_full
 output_prefix: sf_full
 bounds: [-122.521878,37.707039,-122.352077,37.838749]
 
+global:
+  scale_max_length_mm: 225.0
+
+base:
+  height: 20.0
+
 elevation_source:
   type: geotiff
   topo_dir: topo
@@ -20,7 +26,7 @@ terrain:
   split_at_water_level: true
 
 buildings:
-  enabled: true
+  enabled: false
   extract:
     max_building_distance_meters: 0
   generate:
@@ -31,7 +37,6 @@ tiling:
   enabled: true
   rows: 3
   cols: 3
-  scale_max_length_mm: 225.0
 
 output:
   directory: sf_full

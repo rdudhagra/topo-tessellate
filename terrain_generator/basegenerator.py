@@ -2,13 +2,13 @@
 """
 Base Generator
 
-Creates a rectangular prism base (length × width × height in millimeters, Y-up)
+Creates a rectangular prism base (length × width × height in millimeters, Z-up)
 and selectively subtracts a provided cutout mesh on specified sides of the prism.
 
 The cutout orientation and positioning parameters have been optimized through testing
 and are hardcoded for reliable results.
 
-Outputs a single OBJ file with the requested cutouts applied.
+Coordinate system: X=length, Y=width, Z=height (Z-up).
 """
 
 from __future__ import annotations
@@ -33,25 +33,25 @@ class BaseGenerator:
         pass
 
     def create_base_box(self, length_mm: float, width_mm: float, height_mm: float = 20.0) -> mr.Mesh:
-        """Create a rectangular prism aligned to axes with bottom at y=0 (Y-up).
+        """Create a rectangular prism aligned to axes with bottom at z=0 (Z-up).
 
-        Coordinate system (Y-up): X=length, Z=width, Y=height.
+        Coordinate system (Z-up): X=length, Y=width, Z=height.
         """
         L = float(length_mm)  # X
-        W = float(width_mm)   # Z
-        H = float(height_mm)  # Y (up)
+        W = float(width_mm)   # Y
+        H = float(height_mm)  # Z (up)
 
-        # Vertices (bottom y=0, top y=H)
+        # Vertices (bottom z=0, top z=H)
         verts = np.array(
             [
                 [0.0, 0.0, 0.0],   # 0: (x=0, y=0, z=0)
                 [L, 0.0, 0.0],     # 1: (x=L, y=0, z=0)
-                [L, 0.0, W],       # 2: (x=L, y=0, z=W)
-                [0.0, 0.0, W],     # 3: (x=0, y=0, z=W)
-                [0.0, H, 0.0],     # 4: (x=0, y=H, z=0)
-                [L, H, 0.0],       # 5: (x=L, y=H, z=0)
-                [L, H, W],         # 6: (x=L, y=H, z=W)
-                [0.0, H, W],       # 7: (x=0, y=H, z=W)
+                [L, W, 0.0],       # 2: (x=L, y=W, z=0)
+                [0.0, W, 0.0],     # 3: (x=0, y=W, z=0)
+                [0.0, 0.0, H],     # 4: (x=0, y=0, z=H)
+                [L, 0.0, H],       # 5: (x=L, y=0, z=H)
+                [L, W, H],         # 6: (x=L, y=W, z=H)
+                [0.0, W, H],       # 7: (x=0, y=W, z=H)
             ],
             dtype=np.float32,
         )
@@ -59,24 +59,24 @@ class BaseGenerator:
         # Triangles (12) with outward-facing normals (right-hand rule)
         faces = np.array(
             [
-                # Bottom (y=0) outward = -Y
-                [0, 1, 2],
-                [0, 2, 3],
-                # Top (y=H) outward = +Y
-                [4, 6, 5],
-                [4, 7, 6],
+                # Bottom (z=0) outward = -Z
+                [0, 2, 1],
+                [0, 3, 2],
+                # Top (z=H) outward = +Z
+                [4, 5, 6],
+                [4, 6, 7],
                 # +X side (x=L) outward = +X
-                [1, 5, 6],
-                [1, 6, 2],
+                [1, 2, 6],
+                [1, 6, 5],
                 # -X side (x=0) outward = -X
-                [0, 3, 7],
-                [0, 7, 4],
-                # +Z side (z=W) outward = +Z
-                [2, 6, 7],
-                [2, 7, 3],
-                # -Z side (z=0) outward = -Z
-                [0, 4, 5],
-                [0, 5, 1],
+                [0, 4, 7],
+                [0, 7, 3],
+                # +Y side (y=W) outward = +Y
+                [2, 3, 7],
+                [2, 7, 6],
+                # -Y side (y=0) outward = -Y
+                [0, 1, 5],
+                [0, 5, 4],
             ],
             dtype=np.int32,
         )
@@ -107,39 +107,39 @@ class BaseGenerator:
 
     # ---------- positioning logic ----------
     def _orient_cutout_inplace(self, cutout: mr.Mesh, axis_up: AxisUp, yaw_deg: int, flip_cutout_degrees: float) -> None:
-        """Rotate cutout so that its 'up' axis maps to world Y (Y-up), then yaw around Y."""
+        """Rotate cutout so that its 'up' axis maps to world Z (Z-up), then yaw around Z."""
         
-        # Map source up axis to world Y
-        if axis_up == "y":
-            R_up = mr.Matrix3f()  # identity
-        elif axis_up == "z":
-            # Rotate -90° about X: Z -> Y
+        # Map source up axis to world Z
+        if axis_up == "z":
+            R_up = mr.Matrix3f()  # identity - Z already maps to Z
+        elif axis_up == "y":
+            # Rotate +90° about X: Y -> Z
             R_up = mr.Matrix3f(
                 mr.Vector3f(1, 0, 0),
-                mr.Vector3f(0, 0, 1),
-                mr.Vector3f(0, -1, 0)
+                mr.Vector3f(0, 0, -1),
+                mr.Vector3f(0, 1, 0)
             )
         elif axis_up == "x":
-            # Rotate +90° about Z: X -> Y
+            # Rotate -90° about Y: X -> Z
             R_up = mr.Matrix3f(
+                mr.Vector3f(0, 0, 1),
                 mr.Vector3f(0, 1, 0),
-                mr.Vector3f(-1, 0, 0),
-                mr.Vector3f(0, 0, 1)
+                mr.Vector3f(-1, 0, 0)
             )
         else:
             raise ValueError(f"Unknown axis_up: {axis_up}")
 
         cutout.transform(mr.AffineXf3f(R_up, mr.Vector3f(0, 0, 0)))
 
-        # Yaw around Y (vertical) - will be set per side in positioning
+        # Yaw around Z (vertical) - will be set per side in positioning
         yaw_rad = math.radians(float(yaw_deg))
         c, s = math.cos(yaw_rad), math.sin(yaw_rad)
-        Ry = mr.Matrix3f(
-            mr.Vector3f(c, 0, s),
-            mr.Vector3f(0, 1, 0),
-            mr.Vector3f(-s, 0, c)
+        Rz = mr.Matrix3f(
+            mr.Vector3f(c, -s, 0),
+            mr.Vector3f(s, c, 0),
+            mr.Vector3f(0, 0, 1)
         )
-        cutout.transform(mr.AffineXf3f(Ry, mr.Vector3f(0, 0, 0)))
+        cutout.transform(mr.AffineXf3f(Rz, mr.Vector3f(0, 0, 0)))
 
         # Apply additional flip rotation around X if requested
         if abs(float(flip_cutout_degrees)) % 360.0 > 1e-6:
@@ -152,18 +152,18 @@ class BaseGenerator:
             )
             cutout.transform(mr.AffineXf3f(R_flip, mr.Vector3f(0, 0, 0)))
 
-        # Additional 180° rotation around Y-axis before cutting
-        R_y180 = mr.Matrix3f(
+        # Additional 180° rotation around Z-axis before cutting (Z-up coordinate system)
+        R_z180 = mr.Matrix3f(
             mr.Vector3f(-1, 0, 0),
-            mr.Vector3f(0, 1, 0),
-            mr.Vector3f(0, 0, -1)
+            mr.Vector3f(0, -1, 0),
+            mr.Vector3f(0, 0, 1)
         )
-        cutout.transform(mr.AffineXf3f(R_y180, mr.Vector3f(0, 0, 0)))
+        cutout.transform(mr.AffineXf3f(R_z180, mr.Vector3f(0, 0, 0)))
 
-        # Place bottom of cutout at y=0
+        # Place bottom of cutout at z=0 (Z-up coordinate system)
         bbox = cutout.computeBoundingBox()
-        y_offset = -float(bbox.min.y)
-        cutout.transform(mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(0, y_offset, 0)))
+        z_offset = -float(bbox.min.z)
+        cutout.transform(mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(0, 0, z_offset)))
 
     def _position_cutout_on_side_inplace(
         self,
@@ -178,7 +178,7 @@ class BaseGenerator:
         with proper inward embedding by the cutout's own size.
         """
         
-        # Apply additional rotation based on which side we're cutting
+        # Apply additional rotation based on which side we're cutting (Z-up coordinate system)
         if side == "left":
             # No additional rotation needed - cutout faces +X direction
             additional_yaw = 0
@@ -186,10 +186,10 @@ class BaseGenerator:
             # Rotate 180° so cutout faces -X direction  
             additional_yaw = 180
         elif side == "front":
-            # Rotate -90° so cutout faces +Z direction
+            # Rotate -90° so cutout faces +Y direction
             additional_yaw = -90
         elif side == "back":
-            # Rotate 90° so cutout faces -Z direction
+            # Rotate 90° so cutout faces -Y direction
             additional_yaw = 90
         else:
             raise ValueError(f"Unknown side: {side}")
@@ -197,17 +197,18 @@ class BaseGenerator:
         if additional_yaw != 0:
             yaw_rad = math.radians(float(additional_yaw))
             c, s = math.cos(yaw_rad), math.sin(yaw_rad)
-            Ry_additional = mr.Matrix3f(
-                mr.Vector3f(c, 0, s),
-                mr.Vector3f(0, 1, 0),
-                mr.Vector3f(-s, 0, c)
+            # Rotation around Z-axis (up axis) for Z-up coordinate system
+            Rz_additional = mr.Matrix3f(
+                mr.Vector3f(c, -s, 0),
+                mr.Vector3f(s, c, 0),
+                mr.Vector3f(0, 0, 1)
             )
-            cutout.transform(mr.AffineXf3f(Ry_additional, mr.Vector3f(0, 0, 0)))
+            cutout.transform(mr.AffineXf3f(Rz_additional, mr.Vector3f(0, 0, 0)))
 
         # Get updated bbox after rotation
         bbox = cutout.computeBoundingBox()
         center_x = 0.5 * (float(bbox.min.x) + float(bbox.max.x))  # X center
-        center_z = 0.5 * (float(bbox.min.z) + float(bbox.max.z))  # Z center
+        center_y = 0.5 * (float(bbox.min.y) + float(bbox.max.y))  # Y center (width in Z-up)
 
         # Hardcoded optimal values determined through testing
         face_cut_epsilon = -0.5  # mm - optimal epsilon for boolean intersection
@@ -215,21 +216,21 @@ class BaseGenerator:
         if side == "left":
             # Position on left side (x=0), ensure cutout extends into base
             dx = face_cut_epsilon - float(bbox.min.x)
-            dz = (width_mm * 0.5) - center_z
+            dy = (width_mm * 0.5) - center_y
         elif side == "right":
             # Position on right side (x=length), ensure cutout extends into base
             dx = (length_mm - face_cut_epsilon) - float(bbox.max.x)
-            dz = (width_mm * 0.5) - center_z
+            dy = (width_mm * 0.5) - center_y
         elif side == "front":
-            # Position on front side (z=0), ensure cutout extends into base
+            # Position on front side (y=0), ensure cutout extends into base
             dx = (length_mm * 0.5) - center_x
-            dz = face_cut_epsilon - float(bbox.min.z)
+            dy = face_cut_epsilon - float(bbox.min.y)
         elif side == "back":
-            # Position on back side (z=width), ensure cutout extends into base
+            # Position on back side (y=width), ensure cutout extends into base
             dx = (length_mm * 0.5) - center_x
-            dz = (width_mm - face_cut_epsilon) - float(bbox.max.z)
+            dy = (width_mm - face_cut_epsilon) - float(bbox.max.y)
 
-        cutout.transform(mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(dx, 0.0, dz)))
+        cutout.transform(mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(dx, dy, 0.0)))
 
 
 
@@ -297,16 +298,16 @@ class BaseGenerator:
         if cutout_path is None:
             cutout_path = root / "joint_cutout.stl"
 
-        output.header("Generating base with selective joint cutouts (Y-up)")
+        output.header("Generating base with selective joint cutouts (Z-up)")
         output.info(f"Base size: {length_mm} × {width_mm} × {height_mm} mm")
         output.info(f"Cutout: {cutout_path}")
         
         # Create base box
         base = self.create_base_box(length_mm, width_mm, height_mm)
         
-        # Hardcoded optimal parameters determined through testing
-        cutout_up_axis = "z"  # Source cutout up axis
-        yaw_deg = 0  # Working yaw rotation
+        # Hardcoded optimal parameters determined through testing (Z-up coordinate system)
+        cutout_up_axis = "z"  # Source cutout up axis (matches our Z-up system)
+        yaw_deg = 0  # Working yaw rotation around Z-axis
         flip_cutout_degrees = 180.0  # X-axis flip
         
         # Apply cutouts for each requested side

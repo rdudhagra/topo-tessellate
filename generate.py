@@ -30,6 +30,7 @@ from terrain_generator.srtm import SRTM
 from terrain_generator.geotiff import GeoTiff
 from terrain_generator.buildingsextractor import BuildingsExtractor
 from terrain_generator.buildingsgenerator import BuildingsGenerator
+from terrain_generator.basegenerator import BaseGenerator
 
 
 def _ensure_dir(path: str) -> None:
@@ -120,12 +121,23 @@ def _buildings_defaults() -> Dict[str, Any]:
     }
 
 
+def _global_defaults() -> Dict[str, Any]:
+    return {
+        "scale_max_length_mm": 200.0,
+    }
+
+
+def _base_defaults() -> Dict[str, Any]:
+    return {
+        "height": 20.0,
+    }
+
+
 def _tiling_defaults() -> Dict[str, Any]:
     return {
         "enabled": False,
         "rows": 1,
         "cols": 1,
-        "scale_max_length_mm": 200.0,
     }
 
 
@@ -139,36 +151,184 @@ def _merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _generate_base_for_tile(
+    generator: ModelGenerator,
+    bounds: Tuple[float, float, float, float],
+    overall_bounds: Tuple[float, float, float, float],
+    tile_row: int,
+    tile_col: int,
+    total_rows: int,
+    total_cols: int,
+    scale_max_length_mm: float,
+    base_cfg: Dict[str, Any],
+) -> Optional[Any]:
+    """Generate a base mesh for a specific tile with appropriate cutouts.
+    
+    Args:
+        generator: ModelGenerator instance
+        bounds: Tile bounds (min_lon, min_lat, max_lon, max_lat)
+        overall_bounds: Overall bounds for consistent scaling
+        tile_row: Current tile row (0-based)
+        tile_col: Current tile column (0-based)
+        total_rows: Total number of rows
+        total_cols: Total number of columns
+        scale_max_length_mm: Maximum length for scaling each tile
+        
+    Returns:
+        Base mesh or None if generation fails
+    """
+    try:
+        # Calculate dimensions based on overall bounds for consistent scaling
+        overall_width_m, overall_height_m = generator.elevation.calculate_bounds_dimensions_meters(overall_bounds)
+        
+        # Each tile should have dimensions = overall_dimensions / tile_count
+        tile_width_m = overall_width_m / total_cols
+        tile_height_m = overall_height_m / total_rows
+        
+        # Scale to target size in mm (each tile should fit within scale_max_length_mm)
+        target_len_m = float(scale_max_length_mm) / 1000.0
+        denom = max(tile_width_m, tile_height_m) or 1.0
+        scale_factor = float(target_len_m) / float(denom)
+        
+        # Convert to mm for base generation (consistent across all tiles)
+        length_mm = tile_width_m * 1000.0 * scale_factor
+        width_mm = tile_height_m * 1000.0 * scale_factor
+        height_mm = float(base_cfg.get("height", 20.0))
+        
+        # Determine which sides need cutouts (only inner faces)
+        cutout_left = tile_col > 0  # Not leftmost column
+        cutout_right = tile_col < total_cols - 1  # Not rightmost column
+        cutout_front = tile_row > 0  # Not top row
+        cutout_back = tile_row < total_rows - 1  # Not bottom row
+        
+        # Generate base with appropriate cutouts
+        base_gen = BaseGenerator()
+        base_mesh = base_gen.generate_base_with_cutouts(
+            length_mm=length_mm,
+            width_mm=width_mm,
+            height_mm=height_mm,
+            cutout_left=cutout_left,
+            cutout_right=cutout_right,
+            cutout_front=cutout_front,
+            cutout_back=cutout_back,
+        )
+        
+        return base_mesh
+        
+    except Exception as exc:
+        output.warning(f"Failed to generate base for tile ({tile_row}, {tile_col}): {exc}")
+        return None
+
+
 def _save_outputs(
     generator: ModelGenerator,
     result: Dict[str, Any],
     buildings_mesh: Optional[Any],
+    base_mesh: Optional[Any],
     out_dir: str,
     prefix: str,
     bounds: Tuple[float, float, float, float],
+    overall_bounds: Tuple[float, float, float, float],
     scale_max_length_mm: float,
+    tile_row: int = 0,
+    tile_col: int = 0,
+    total_rows: int = 1,
+    total_cols: int = 1,
     output_cfg: Optional[Dict[str, Any]] = None,
 ) -> None:
     _ensure_dir(out_dir)
     land = result.get("land_mesh")
-    # Scale meshes to fit max length in mm (XY fit) before saving
+    
+    # Apply uniform scaling to land and buildings meshes to match base footprint (X,Y) 
+    # with proportional Z scaling, then vertically offset them by base height
     try:
-        width_m, height_m = generator.elevation.calculate_bounds_dimensions_meters(bounds)
-        target_len_m = float(scale_max_length_mm) / 1000.0
-        denom = max(width_m, height_m) or 1.0
-        s = float(target_len_m) / float(denom)
-        if land is not None and s > 0 and s != 1.0:
-            verts = mn.getNumpyVerts(land)
-            verts *= s
-        if buildings_mesh is not None and s > 0 and s != 1.0:
-            verts_bld = mn.getNumpyVerts(buildings_mesh)
-            verts_bld *= s
+        if base_mesh is not None:
+            base_bbox = base_mesh.computeBoundingBox()
+            base_x = base_bbox.max.x - base_bbox.min.x
+            base_y = base_bbox.max.y - base_bbox.min.y
+            
+            # Calculate uniform scaling parameters based on land mesh dimensions
+            scale_x = 1.0
+            scale_y = 1.0
+            scale_z = 1.0
+            
+            if land is not None:
+                land_bbox = land.computeBoundingBox()
+                land_x = land_bbox.max.x - land_bbox.min.x
+                land_y = land_bbox.max.y - land_bbox.min.y
+                
+                scale_x = base_x / land_x if land_x > 0 else 1.0
+                scale_y = base_y / land_y if land_y > 0 else 1.0
+                scale_z = (scale_x + scale_y) / 2.0  # Z scale = average of X and Y scales
+            
+            # Apply uniform scaling to land mesh
+            if land is not None and (abs(scale_x - 1.0) > 1e-6 or abs(scale_y - 1.0) > 1e-6):
+                scale_matrix = mr.Matrix3f()
+                scale_matrix.x.x = scale_x
+                scale_matrix.y.y = scale_y
+                scale_matrix.z.z = scale_z  # Apply proportional Z scaling
+                
+                scale_transform = mr.AffineXf3f(scale_matrix, mr.Vector3f())
+                land.transform(scale_transform)
+            
+            # Apply same uniform scaling to buildings mesh
+            if buildings_mesh is not None and (abs(scale_x - 1.0) > 1e-6 or abs(scale_y - 1.0) > 1e-6):
+                scale_matrix = mr.Matrix3f()
+                scale_matrix.x.x = scale_x
+                scale_matrix.y.y = scale_y
+                scale_matrix.z.z = scale_z  # Apply same proportional Z scaling
+                
+                scale_transform = mr.AffineXf3f(scale_matrix, mr.Vector3f())
+                buildings_mesh.transform(scale_transform)
+            
+            # Apply vertical offset to both meshes
+            base_height = base_bbox.max.z - base_bbox.min.z
+            offset_transform = mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(0, 0, base_height))
+            
+            if land is not None:
+                land.transform(offset_transform)
+            
+            if buildings_mesh is not None:
+                buildings_mesh.transform(offset_transform)
+        
     except Exception as exc:
-        output.warning(f"Scaling failed or unavailable: {exc}")
+        output.warning(f"Footprint scaling failed: {exc}")
+    
+    # Save each mesh as separate STL files
+    saved_files = []
+    
+    # Save base mesh
+    if base_mesh is not None:
+        try:
+            base_path = os.path.join(out_dir, f"{prefix}_base.stl")
+            mr.saveMesh(base_mesh, base_path)
+            output.file_saved(base_path, "base mesh")
+            saved_files.append("base")
+        except Exception as exc:
+            output.warning(f"Failed to save base mesh: {exc}")
+    
+    # Save land mesh
     if land is not None:
-        generator.save_mesh(land, os.path.join(out_dir, f"{prefix}_land.obj"))
+        try:
+            land_path = os.path.join(out_dir, f"{prefix}_land.stl")
+            mr.saveMesh(land, land_path)
+            output.file_saved(land_path, "land mesh")
+            saved_files.append("land")
+        except Exception as exc:
+            output.warning(f"Failed to save land mesh: {exc}")
+    
+    # Save buildings mesh
     if buildings_mesh is not None:
-        generator.save_mesh(buildings_mesh, os.path.join(out_dir, f"{prefix}_buildings.obj"))
+        try:
+            buildings_path = os.path.join(out_dir, f"{prefix}_buildings.stl")
+            mr.saveMesh(buildings_mesh, buildings_path)
+            output.file_saved(buildings_path, "buildings mesh")
+            saved_files.append("buildings")
+        except Exception as exc:
+            output.warning(f"Failed to save buildings mesh: {exc}")
+    
+    if saved_files:
+        output.success(f"Saved {len(saved_files)} STL files: {', '.join(saved_files)}")
 
 
 def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, only_prefix: Optional[str] = None) -> None:
@@ -195,6 +355,12 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
         cache_max_age_days=int(terrain_cfg.get("cache_max_age_days", 30)),
     )
 
+    # Global configuration
+    global_cfg = _merge(_global_defaults(), job_cfg.get("global", {}))
+    
+    # Base configuration
+    base_cfg = _merge(_base_defaults(), job_cfg.get("base", {}))
+    
     # Tiling (separate section)
     tiling_cfg = _merge(_tiling_defaults(), job_cfg.get("tiling", {}))
     tile_enabled = bool(tiling_cfg.get("enabled", False))
@@ -253,59 +419,65 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
             output.warning(f"Failed to align buildings to terrain z=0: {exc}")
         return bmesh
 
-    # Result entries: (prefix, terrain_result, tile_bounds, buildings_mesh)
-    results: List[Tuple[str, Dict[str, Any], Tuple[float, float, float, float], Optional[Any]]] = []
+    # Result entries: (prefix, terrain_result, tile_bounds, buildings_mesh, base_mesh, tile_row, tile_col)
+    results: List[Tuple[str, Dict[str, Any], Tuple[float, float, float, float], Optional[Any], Optional[Any], int, int]] = []
     if tile_enabled and (tile_rows > 1 or tile_cols > 1):
         min_lon, min_lat, max_lon, max_lat = bounds
         dlon = (max_lon - min_lon) / float(tile_cols)
         dlat = (max_lat - min_lat) / float(tile_rows)
-        from concurrent.futures import ThreadPoolExecutor
-        # GeoTIFF elevation preprocessing is not thread-safe; restrict concurrency if using GeoTiff
-        max_workers = 1 if isinstance(elevation, GeoTiff) else min(8, tile_rows * tile_cols)
-        tasks = []
-        with ThreadPoolExecutor(max_workers=max_workers) as ex:
-            for r in range(tile_rows):
-                for c in range(tile_cols):
-                    t_bounds = (
-                        min_lon + c * dlon,
-                        min_lat + r * dlat,
-                        min_lon + (c + 1) * dlon,
-                        min_lat + (r + 1) * dlat,
-                    )
-                    t_prefix = f"{prefix}_r{r+1}c{c+1}"
-                    def _process_tile(tp=t_prefix, tb=t_bounds):
-                        try:
-                            tres = _gen(tb)
-                        except Exception as exc:
-                            output.warning(f"Skipping tile {tp}: {exc}")
-                            return None
-                        bmesh = _gen_buildings(tb, tres.get("elevation_data")) if (tres and "elevation_data" in tres) else None
-                        return (tp, tres, tb, bmesh)
-                    tasks.append(ex.submit(_process_tile))
-            for fut in tasks:
-                res_tuple = fut.result()
-                if res_tuple is None:
+        # Process tiles sequentially to avoid display conflicts
+        for r in range(tile_rows):
+            for c in range(tile_cols):
+                t_bounds = (
+                    min_lon + c * dlon,
+                    min_lat + r * dlat,
+                    min_lon + (c + 1) * dlon,
+                    min_lat + (r + 1) * dlat,
+                )
+                t_prefix = f"{prefix}_r{r+1}c{c+1}"
+                try:
+                    tres = _gen(t_bounds)
+                except Exception as exc:
+                    output.warning(f"Skipping tile {t_prefix}: {exc}")
                     continue
-                tp, tres, tb, bmesh = res_tuple
-                results.append((tp, tres, tb, bmesh))
+                bmesh = _gen_buildings(t_bounds, tres.get("elevation_data")) if (tres and "elevation_data" in tres) else None
+                # Generate base mesh for this tile
+                base_mesh = _generate_base_for_tile(
+                    generator, t_bounds, bounds, r, c, tile_rows, tile_cols, 
+                    float(global_cfg.get("scale_max_length_mm", 200.0)),
+                    base_cfg
+                )
+                results.append((t_prefix, tres, t_bounds, bmesh, base_mesh, r, c))
     else:
         t_res = _gen(bounds)
         bmesh = _gen_buildings(bounds, t_res["elevation_data"]) if t_res else None
-        results.append((prefix, t_res, bounds, bmesh))
+        # Generate base for single tile (no cutouts needed for single tile)
+        base_mesh = _generate_base_for_tile(
+            generator, bounds, bounds, 0, 0, 1, 1, 
+            float(global_cfg.get("scale_max_length_mm", 200.0)),
+            base_cfg
+        )
+        results.append((prefix, t_res, bounds, bmesh, base_mesh, 0, 0))
 
     # Output
     output_cfg = job_cfg.get("output", {}) or {}
     out_dir = str(output_cfg.get("directory") or global_output_dir or ".")
     # Save outputs for each (possibly tiled) result with scaling
-    for t_prefix, res, t_bounds, bmesh in results:
+    for t_prefix, res, t_bounds, bmesh, base_mesh, tr, tc in results:
         _save_outputs(
             generator,
             res,
             bmesh,
+            base_mesh,
             out_dir,
             t_prefix,
             t_bounds,
+            bounds,  # Pass overall bounds for consistent scaling
             float(tiling_cfg.get("scale_max_length_mm", 200.0)),
+            tr,
+            tc,
+            tile_rows,
+            tile_cols,
             output_cfg,
         )
 

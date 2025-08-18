@@ -19,6 +19,12 @@
 # name: dc                  # OPTIONAL but recommended. Human-readable identifier. Also selectable via --job.
 # output_prefix: dc         # REQUIRED for predictable outputs. Prefix for filenames (e.g., dc_land.obj).
 #
+# global:                   # OPTIONAL. Global parameters that affect overall scaling and processing.
+#   scale_max_length_mm: 200.0  # Max XY length of output (mm). Mesh is uniformly scaled to fit this box.
+#
+# base:                     # OPTIONAL. Base generation parameters (when tiling is enabled).
+#   height: 20.0            # [mm] Height of the base prism. Use 20mm for tiled configs, 10mm for non-tiled.
+#
 # bounds:                   # REQUIRED. Geographic bounding box in [min_lon, min_lat, max_lon, max_lat] (degrees).
 #   - -77.0728342158        #   min_lon (west). Negative for western hemisphere. Example: -77.07
 #   - 38.8349886875         #   min_lat (south). Positive for northern hemisphere. Example: 38.83
@@ -63,8 +69,6 @@
 #   adaptive_max_gap_fraction: 0.0039  # Max fraction of original resolution allowed as a single cell (default 1/256)
 #   adaptive_max_sampled_rows: 400 # Max rows sampled for RDP selection; bounds runtime
 #   adaptive_max_sampled_cols: 400 # Max cols sampled for RDP selection; bounds runtime
-#   # Scaling
-#   scale_max_length_mm: 200.0      # Max XY length of output (mm). Mesh is uniformly scaled to fit this box.
 #   split_at_water_level: true    # If true and water_threshold set, split terrain into land (above) and base (below).
 #   merge_land_and_base: false    # If true, produce a single merged mesh in-memory (see output.save_merged to write it).
 #   use_cache: true               # If true, cache terrain results in terrain_cache/ for faster repeat runs.
@@ -86,7 +90,6 @@
 #   enabled: false                 # If true, split bounds into a grid and export each tile separately.
 #   rows: 1                        # Number of tile rows
 #   cols: 1                        # Number of tile columns
-#   scale_max_length_mm: 200.0     # Each tile's XY is uniformly scaled to fit within this max length (mm)
 
 # output:
 #   directory: outputs/dc         # Directory to write .obj files (land, base, buildings, merged if enabled).

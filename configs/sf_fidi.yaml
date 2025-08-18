@@ -3,6 +3,12 @@ name: sf_fidi
 output_prefix: sf_fidi
 bounds: [-122.42846, 37.77723, -122.37645, 37.81792]
 
+global:
+  scale_max_length_mm: 200.0
+
+base:
+  height: 10.0
+
 elevation_source:
   type: geotiff
   topo_dir: topo
