@@ -1,3 +1,4 @@
+from typing import Tuple
 from terrain_generator.buildingbase import Building
 from terrain_generator.elevation import Elevation
 import numpy as np
@@ -10,6 +11,19 @@ class BuildingsGenerator:
         self.elevation = elevation
         self.pool_context = {}
 
+    def _scale_mesh_to_max_length(self, mesh : mr.Mesh, max_length_mm : float, bounds : Tuple[float, float, float, float]) -> mr.Mesh:
+        """
+        Scale the mesh to the max length.
+        """
+        width_meters, height_meters = self.elevation.calculate_bounds_dimensions_meters(bounds)
+        max_dim = max(width_meters, height_meters)
+        scale_factor = max_length_mm / max_dim
+
+        # Scale the mesh to the max length
+        output.progress_info(f"Scaling mesh to max length {max_length_mm} mm with scale factor {scale_factor}")
+        mesh.transform(mr.AffineXf3f(mr.Matrix3f.scale(scale_factor), mr.Vector3f(0, 0, 0)))
+        return mesh
+
     def generate_buildings(
         self,
         elevation_data: np.ndarray,
@@ -18,6 +32,7 @@ class BuildingsGenerator:
         bounds: tuple[float, float, float, float],
         buildings: list[Building],
         min_building_height: float = 25,
+        max_length_mm: float = 200.0,
     ):
         """
         Generate buildings in a separate mesh
@@ -121,8 +136,9 @@ class BuildingsGenerator:
         output.progress_info(f"Merging chunks...")
         all_chunks_mesh = mr.mergeMeshes(all_chunks_meshes)
 
-        # Move the buildings mesh group to the correct position
-        # Base height has been removed; buildings are already placed at z relative to terrain (z=0 water plane)
+        # Scale the buildings mesh to the max length
+        if max_length_mm is not None:
+            all_chunks_mesh = self._scale_mesh_to_max_length(all_chunks_mesh, max_length_mm, bounds)
 
         return all_chunks_mesh
 

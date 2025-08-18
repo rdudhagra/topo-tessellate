@@ -238,61 +238,17 @@ def _save_outputs(
 ) -> None:
     _ensure_dir(out_dir)
     land = result.get("land_mesh")
+            
+    # Apply vertical offset to both meshes
+    base_bbox = base_mesh.computeBoundingBox()
+    base_height = base_bbox.max.z - base_bbox.min.z
+    offset_transform = mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(0, 0, base_height))
     
-    # Apply uniform scaling to land and buildings meshes to match base footprint (X,Y) 
-    # with proportional Z scaling, then vertically offset them by base height
-    try:
-        if base_mesh is not None:
-            base_bbox = base_mesh.computeBoundingBox()
-            base_x = base_bbox.max.x - base_bbox.min.x
-            base_y = base_bbox.max.y - base_bbox.min.y
-            
-            # Calculate uniform scaling parameters based on land mesh dimensions
-            scale_x = 1.0
-            scale_y = 1.0
-            scale_z = 1.0
-            
-            if land is not None:
-                land_bbox = land.computeBoundingBox()
-                land_x = land_bbox.max.x - land_bbox.min.x
-                land_y = land_bbox.max.y - land_bbox.min.y
-                
-                scale_x = base_x / land_x if land_x > 0 else 1.0
-                scale_y = base_y / land_y if land_y > 0 else 1.0
-                scale_z = (scale_x + scale_y) / 2.0  # Z scale = average of X and Y scales
-            
-            # Apply uniform scaling to land mesh
-            if land is not None and (abs(scale_x - 1.0) > 1e-6 or abs(scale_y - 1.0) > 1e-6):
-                scale_matrix = mr.Matrix3f()
-                scale_matrix.x.x = scale_x
-                scale_matrix.y.y = scale_y
-                scale_matrix.z.z = scale_z  # Apply proportional Z scaling
-                
-                scale_transform = mr.AffineXf3f(scale_matrix, mr.Vector3f())
-                land.transform(scale_transform)
-            
-            # Apply same uniform scaling to buildings mesh
-            if buildings_mesh is not None and (abs(scale_x - 1.0) > 1e-6 or abs(scale_y - 1.0) > 1e-6):
-                scale_matrix = mr.Matrix3f()
-                scale_matrix.x.x = scale_x
-                scale_matrix.y.y = scale_y
-                scale_matrix.z.z = scale_z  # Apply same proportional Z scaling
-                
-                scale_transform = mr.AffineXf3f(scale_matrix, mr.Vector3f())
-                buildings_mesh.transform(scale_transform)
-            
-            # Apply vertical offset to both meshes
-            base_height = base_bbox.max.z - base_bbox.min.z
-            offset_transform = mr.AffineXf3f(mr.Matrix3f(), mr.Vector3f(0, 0, base_height))
-            
-            if land is not None:
-                land.transform(offset_transform)
-            
-            if buildings_mesh is not None:
-                buildings_mesh.transform(offset_transform)
-        
-    except Exception as exc:
-        output.warning(f"Footprint scaling failed: {exc}")
+    if land is not None:
+        land.transform(offset_transform)
+    
+    if buildings_mesh is not None:
+        buildings_mesh.transform(offset_transform)
     
     # Save each mesh as separate STL files
     saved_files = []
@@ -367,7 +323,7 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
     tile_rows = max(1, int(tiling_cfg.get("rows", 1)))
     tile_cols = max(1, int(tiling_cfg.get("cols", 1)))
 
-    def _gen(bounds_tile: Tuple[float, float, float, float]) -> Dict[str, Any]:
+    def _gen(bounds_tile: Tuple[float, float, float, float], max_length_mm: float) -> Dict[str, Any]:
         return generator.generate_terrain_model(
             bounds=bounds_tile,
             topo_dir=topo_dir,
@@ -380,6 +336,7 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
             adaptive_max_sampled_rows=int(terrain_cfg.get("adaptive_max_sampled_rows", 400)),
             adaptive_max_sampled_cols=int(terrain_cfg.get("adaptive_max_sampled_cols", 400)),
             split_at_water_level=bool(terrain_cfg["split_at_water_level"]),
+            max_length_mm=max_length_mm,
         )
 
     # Helper: per-tile buildings mesh generation
@@ -408,15 +365,8 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
             bounds_tile,
             buildings,
             min_building_height=float(buildings_cfg["generate"].get("min_building_height", 10.0)),
+            max_length_mm=float(global_cfg.get("scale_max_length_mm", 200.0)),
         )
-        # Align buildings with terrain if terrain was split and shifted to z=0 at water plane
-        try:
-            if bmesh is not None and bool(terrain_cfg.get("split_at_water_level", True)) and terrain_cfg.get("water_threshold") is not None:
-                plane_z = float(terrain_cfg["water_threshold"]) * float(terrain_cfg["elevation_multiplier"])
-                if plane_z != 0.0:
-                    bmesh.transform(mr.AffineXf3f.translation(mr.Vector3f(0, 0, -plane_z)))
-        except Exception as exc:
-            output.warning(f"Failed to align buildings to terrain z=0: {exc}")
         return bmesh
 
     # Result entries: (prefix, terrain_result, tile_bounds, buildings_mesh, base_mesh, tile_row, tile_col)
@@ -436,7 +386,7 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
                 )
                 t_prefix = f"{prefix}_r{r+1}c{c+1}"
                 try:
-                    tres = _gen(t_bounds)
+                    tres = _gen(t_bounds, float(global_cfg.get("scale_max_length_mm", 200.0)))
                 except Exception as exc:
                     output.warning(f"Skipping tile {t_prefix}: {exc}")
                     continue
@@ -449,7 +399,7 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
                 )
                 results.append((t_prefix, tres, t_bounds, bmesh, base_mesh, r, c))
     else:
-        t_res = _gen(bounds)
+        t_res = _gen(bounds, float(global_cfg.get("scale_max_length_mm", 200.0)))
         bmesh = _gen_buildings(bounds, t_res["elevation_data"]) if t_res else None
         # Generate base for single tile (no cutouts needed for single tile)
         base_mesh = _generate_base_for_tile(

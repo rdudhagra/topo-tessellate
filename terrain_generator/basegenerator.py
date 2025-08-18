@@ -187,10 +187,10 @@ class BaseGenerator:
             additional_yaw = 180
         elif side == "front":
             # Rotate -90° so cutout faces +Y direction
-            additional_yaw = -90
+            additional_yaw = 90
         elif side == "back":
             # Rotate 90° so cutout faces -Y direction
-            additional_yaw = 90
+            additional_yaw = -90
         else:
             raise ValueError(f"Unknown side: {side}")
             

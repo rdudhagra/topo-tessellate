@@ -656,8 +656,21 @@ class ModelGenerator:
 
         mesh = mn.meshFromFacesVerts(faces_array, vertices_array)
         return mesh
+
+    def _scale_mesh_to_max_length(self, mesh : mr.Mesh, max_length_mm : float, bounds : Tuple[float, float, float, float]) -> mr.Mesh:
+        """
+        Scale the mesh to the max length.
+        """
+        width_meters, height_meters = self.elevation.calculate_bounds_dimensions_meters(bounds)
+        max_dim = max(width_meters, height_meters)
+        scale_factor = max_length_mm / max_dim
+
+        # Scale the mesh to the max length
+        output.progress_info(f"Scaling mesh to max length {max_length_mm} mm with scale factor {scale_factor}")
+        mesh.transform(mr.AffineXf3f(mr.Matrix3f.scale(scale_factor), mr.Vector3f(0, 0, 0)))
+        return mesh
     
-    def save_mesh(self, mesh, filename):
+    def save_mesh(self, mesh : mr.Mesh, filename : str) -> None:
         """
         Save the mesh to a file.
 
@@ -684,6 +697,7 @@ class ModelGenerator:
         adaptive_max_sampled_rows: int = 400,
         adaptive_max_sampled_cols: int = 400,
         split_at_water_level: bool = True,
+        max_length_mm: float = 200.0,
     ):
         """
         Generate a 3D terrain model from SRTM elevation data.
@@ -774,6 +788,11 @@ class ModelGenerator:
                 )
         else:
             land = terrain
+
+        # Scale the land mesh to the max length
+        if max_length_mm is not None:
+            output.subheader("Scaling land mesh to max length")
+            land = self._scale_mesh_to_max_length(land, max_length_mm, bounds)
 
         # Create result dictionary
         result = {
