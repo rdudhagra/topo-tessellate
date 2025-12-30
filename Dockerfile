@@ -31,6 +31,7 @@ WORKDIR /app
 
 # Copy application code
 COPY terrain_generator/ /app/terrain_generator/
+COPY scripts/ /app/scripts/
 COPY configs/ /app/configs/
 COPY models/ /app/models/
 COPY tests/ /app/tests/
