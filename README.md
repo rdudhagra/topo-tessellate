@@ -208,7 +208,7 @@ Try reducing the `downsample_factor` in your config (lower = more detail, but la
 
 ## License
 
-MIT
+GPL-3.0 - See [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
