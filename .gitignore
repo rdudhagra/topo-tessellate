@@ -64,4 +64,7 @@ data/
 analysis/
 
 # Jupyter Notebook
-.ipynb_checkpoints 
+.ipynb_checkpoints
+
+# Overrides
+!models/*.stl

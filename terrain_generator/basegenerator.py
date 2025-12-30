@@ -360,17 +360,17 @@ class BaseGenerator:
             cutout_front: Whether to add cutout on front side (y=0)
             cutout_back: Whether to add cutout on back side (y=width)
             cutout_cleat: Whether to add cleat cutout on bottom face (z=0, default True)
-            cutout_path: Path to joint cutout STL file (defaults to joint_cutout.stl)
-            cleat_cutout_path: Path to cleat cutout STL file (defaults to cleat_cutout.stl)
+            cutout_path: Path to joint cutout STL file (defaults to models/joint_cutout.stl)
+            cleat_cutout_path: Path to cleat cutout STL file (defaults to models/cleat_cutout.stl)
 
         Returns:
             mr.Mesh: The generated mesh with requested cutouts applied
         """
         root = Path(__file__).resolve().parents[1]
         if cutout_path is None:
-            cutout_path = root / "joint_cutout.stl"
+            cutout_path = root / "models/joint_cutout.stl"
         if cleat_cutout_path is None:
-            cleat_cutout_path = root / "cleat_cutout.stl"
+            cleat_cutout_path = root / "models/cleat_cutout.stl"
 
         output.header("Generating base with selective joint cutouts (Z-up)")
         output.info(f"Base size: {length_mm} × {width_mm} × {height_mm} mm")

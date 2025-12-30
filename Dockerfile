@@ -32,9 +32,9 @@ WORKDIR /app
 # Copy application code
 COPY terrain_generator/ /app/terrain_generator/
 COPY configs/ /app/configs/
+COPY models/ /app/models/
+COPY tests/ /app/tests/
 COPY generate.py /app/
-COPY joint_cutout.stl /app/
-COPY cleat_cutout.stl /app/
 
 # Create directories for mounted volumes
 RUN mkdir -p /app/outputs /app/topo
