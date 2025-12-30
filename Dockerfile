@@ -1,4 +1,4 @@
-# World-to-Model Terrain Generator
+# Topo-tessellate Terrain Generator
 # Multi-stage build using mambaforge for meshlib compatibility
 
 # Stage 1: Build environment
@@ -18,11 +18,11 @@ RUN mamba env create -f /tmp/environment.yml && \
 FROM condaforge/mambaforge:latest
 
 # Copy conda environment from builder
-COPY --from=builder /opt/conda/envs/world-to-model /opt/conda/envs/world-to-model
+COPY --from=builder /opt/conda/envs/topo-tessellate /opt/conda/envs/topo-tessellate
 
 # Set up environment activation
-ENV PATH="/opt/conda/envs/world-to-model/bin:$PATH"
-ENV CONDA_DEFAULT_ENV=world-to-model
+ENV PATH="/opt/conda/envs/topo-tessellate/bin:$PATH"
+ENV CONDA_DEFAULT_ENV=topo-tessellate
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 

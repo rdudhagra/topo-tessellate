@@ -1,11 +1,11 @@
 #!/bin/bash
-# World-to-Model Runner Script
+# Topo-tessellate Runner Script
 # Pulls the container from GHCR or builds locally, then runs the generator
 
 set -e
 
-IMAGE="ghcr.io/rdudhagra/world-to-model:latest"
-LOCAL_IMAGE="world-to-model:local"
+IMAGE="ghcr.io/rdudhagra/topo-tessellate:latest"
+LOCAL_IMAGE="topo-tessellate:local"
 
 # Color output
 RED='\033[0;31m'
@@ -72,7 +72,7 @@ get_image() {
 
 # Show usage if no arguments
 if [ $# -eq 0 ]; then
-    echo "World-to-Model Terrain Generator"
+    echo "Topo-tessellate Terrain Generator"
     echo ""
     echo "Usage: $0 [OPTIONS]"
     echo ""

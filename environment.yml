@@ -1,4 +1,4 @@
-name: world-to-model
+name: topo-tessellate
 channels:
   - conda-forge
   - defaults

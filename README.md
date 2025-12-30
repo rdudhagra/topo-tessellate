@@ -27,7 +27,7 @@ docker run --rm \
     -v "$PWD/configs:/app/configs" \
     -v "$PWD/topo:/app/topo" \
     -v "$PWD/outputs:/app/outputs" \
-    ghcr.io/rdudhagra/world-to-model:latest \
+    ghcr.io/rdudhagra/topo-tessellate:latest \
     --config configs/sf_fidi.yaml
 ```
 
@@ -37,12 +37,12 @@ The project requires conda due to complex dependencies (meshlib, GDAL, rasterio)
 
 ```bash
 # Clone the repository
-git clone https://github.com/rdudhagra/world-to-model.git
-cd world-to-model
+git clone https://github.com/rdudhagra/topo-tessellate.git
+cd topo-tessellate
 
 # Create conda environment
 conda env create -f environment.yml
-conda activate world-to-model
+conda activate topo-tessellate
 
 # Run the generator
 python generate.py --config configs/sf_fidi.yaml
@@ -161,7 +161,7 @@ for building in buildings[:5]:
 ### Building Locally
 
 ```bash
-docker build -t world-to-model .
+docker build -t topo-tessellate .
 ```
 
 ### Running the Container
@@ -175,7 +175,7 @@ docker run --rm \
     -v "$PWD/configs:/app/configs:ro" \
     -v "$PWD/topo:/app/topo:ro" \
     -v "$PWD/outputs:/app/outputs" \
-    world-to-model --config configs/sf_fidi.yaml
+    topo-tessellate --config configs/sf_fidi.yaml
 ```
 
 ### Volume Mounts
@@ -191,7 +191,7 @@ docker run --rm \
 ### Running Tests
 
 ```bash
-conda activate world-to-model
+conda activate topo-tessellate
 python scripts/test_buildings_processor.py
 ```
 
@@ -206,7 +206,7 @@ python demo_console.py
 ## Project Structure
 
 ```
-world-to-model/
+topo-tessellate/
 ├── generate.py              # Main entry point
 ├── terrain_generator/       # Core library
 │   ├── buildingsextractor.py
