@@ -1,0 +1,43 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: topo-tessellate:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run tests
+        run: |
+          docker run --rm \
+            --entrypoint pytest \
+            topo-tessellate:test \
+            -v --tb=short
+
+      - name: Run tests with coverage (optional)
+        run: |
+          docker run --rm \
+            --entrypoint pytest \
+            topo-tessellate:test \
+            --tb=short -q
+        continue-on-error: true
+

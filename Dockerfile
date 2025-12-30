@@ -35,6 +35,7 @@ COPY configs/ /app/configs/
 COPY models/ /app/models/
 COPY tests/ /app/tests/
 COPY generate.py /app/
+COPY pytest.ini /app/
 
 # Create directories for mounted volumes
 RUN mkdir -p /app/outputs /app/topo

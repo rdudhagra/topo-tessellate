@@ -190,24 +190,40 @@ docker run --rm \
 
 ### Running Tests
 
+Tests run inside the Docker container using pytest:
+
+```bash
+# Run all tests (builds image if needed)
+./test.sh
+
+# Run with verbose output
+./test.sh -v
+
+# Run specific test file
+./test.sh tests/test_buildings_processor.py
+
+# Run tests matching a pattern
+./test.sh -k 'bbox'
+
+# Force rebuild of test image
+./test.sh --rebuild
+```
+
+Or run tests natively with conda:
+
 ```bash
 conda activate topo-tessellate
-python scripts/test_buildings_processor.py
+pytest -v
 ```
 
-### Console Demo
-
-See the rich console output in action:
-
-```bash
-python demo_console.py
-```
-
-## Project Structure
+### Project Structure
 
 ```
 topo-tessellate/
 ├── generate.py              # Main entry point
+├── run.sh                   # Docker runner script
+├── test.sh                  # Test runner script
+├── Dockerfile               # Container definition
 ├── terrain_generator/       # Core library
 │   ├── buildingsextractor.py
 │   ├── buildingsgenerator.py
@@ -218,6 +234,9 @@ topo-tessellate/
 │   ├── srtm.py
 │   ├── geotiff.py
 │   └── console.py
+├── tests/                   # Pytest test suite
+│   ├── conftest.py          # Shared fixtures
+│   └── test_buildings_processor.py
 ├── configs/                 # Example configurations
 │   ├── template.yaml
 │   ├── bay_area.yaml

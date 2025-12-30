@@ -15,6 +15,7 @@ dependencies:
   - scikit-image
   - shapely
   - pyyaml
+  - pytest>=7.0.0
   - pip
   - pip:
     - meshlib

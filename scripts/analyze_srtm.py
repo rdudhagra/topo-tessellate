@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-SRTM Testing Script
+SRTM Analysis Script
 
-This script tests the SRTM elevation data loading and processing functionality.
+This script analyzes SRTM elevation data and creates visualizations.
 """
 
 import argparse
@@ -25,7 +25,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-def test_srtm(bounds, topo_dir="topo", save_plots=True):
+def analyze_srtm(bounds, topo_dir="topo", save_plots=True):
     """
     Test the SRTM class with given bounds and visualize the results.
 
@@ -248,7 +248,7 @@ def main():
         sys.exit(1)
 
     bounds = (args.min_lon, args.min_lat, args.max_lon, args.max_lat)
-    success = test_srtm(bounds, args.topo_dir, not args.no_plots)
+    success = analyze_srtm(bounds, args.topo_dir, not args.no_plots)
 
     if success:
         output.success("🎉 All tests passed successfully!")
