@@ -1,4 +1,4 @@
-# World to Model - 3D Terrain Generator
+# Topo-Tessellate - 3D Terrain Generator from REAL elevation+buildings data
 
 Generate high-quality 3D terrain models from SRTM/GeoTIFF elevation data with optional building extraction from OpenStreetMap.
 
