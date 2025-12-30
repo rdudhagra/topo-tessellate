@@ -27,8 +27,6 @@ try:
 except ImportError:
     from terrain_generator.srtm import SRTM
 
-import os
-
 
 class ModelGenerator:
     """

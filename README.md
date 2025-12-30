@@ -1,261 +1,232 @@
-# World to Model - Terrain Generator
+# World to Model - 3D Terrain Generator
 
-## Unified YAML-driven generator
-
-Use `generate.py` with a YAML configuration to run one or multiple jobs:
-
-```
-python generate.py --config configs/test_srtm.yaml
-python generate.py --config configs/dc.yaml --job dc
-```
-
-See `configs/template.yaml` for a fully documented schema.
-
-A Python application to generate 3D CAD models of terrain from SRTM elevation data and extract 3D-ready building data from OpenStreetMap.
-
-## Overview
-
-This tool creates high-quality 3D models of terrain and extracts 3D-ready building data for various purposes including:
-
-- CAD design and engineering projects
-- Digital fabrication (3D printing)
-- Visualization and presentations
-- GIS and mapping applications
-- Urban planning and analysis
-- 3D city modeling and visualization
-
-The application uses SRTM (Shuttle Radar Topography Mission) data to generate accurate 3D terrain models with proper elevation, including water bodies. Additionally, it extracts building and structure data from OpenStreetMap that is specifically optimized for 3D modeling applications.
+Generate high-quality 3D terrain models from SRTM/GeoTIFF elevation data with optional building extraction from OpenStreetMap.
 
 ## Features
 
-### Terrain Generation
-- High-quality CAD models from SRTM elevation data
-- Support for STEP, STL, and 3MF formats
-- Water body representation
- - Adaptive meshing to reduce faces in flat/linear-slope regions (no runtime decimation)
+- **Terrain Generation**: Create 3D meshes from SRTM or GeoTIFF elevation data
+- **Building Extraction**: Pull 3D-ready building data from OpenStreetMap
+- **Adaptive Meshing**: Intelligent mesh simplification for optimal file sizes
+- **Tiling Support**: Split large regions into printable tiles with interlocking joints
+- **Multiple Formats**: Export to STL for 3D printing
+- **Caching**: Local caching for faster repeat runs
+- **Beautiful Console Output**: Rich terminal output with progress bars and formatting
 
-### Beautiful Console Output 🎨
-- **Colorful Interface**: Rich terminal output with colors, icons, and formatting
-- **Structured Tables**: Statistics and data displayed in beautiful tables
-- **Progress Tracking**: Visual progress bars for long operations
-- **Consistent Styling**: Uniform output across all modules and scripts
-- **Error Handling**: Clear error messages with helpful suggestions
-- **Cache Visualization**: Visual feedback for cache hits and misses
+## Quick Start
 
-Run `python demo_console.py` to see all the console output features in action!
+### Using Docker (Recommended)
 
-### 3D-Ready Building Data Extraction (`buildings.py`)
-- **3D-Focused**: Only extracts buildings with BOTH polygon coordinates AND height data
-- **Quality Filtering**: Focuses on major buildings/structures (filters out small items like lamps, trees, etc.)
-- **Fast Caching**: Local caching with compression (pickle + gzip) 
-- **Comprehensive Analytics**: Building statistics, areas, heights, and types
-- **Guaranteed 3D Data**: Every building has polygon geometry and height information
-- **Cache Management**: Configurable expiration and cache control
-
-## New CadQuery Support
-
-The latest version uses CadQuery, a powerful parametric CAD scripting library, to create high-quality 3D models. This offers advantages over the previous mesh-based approach:
-
-- Higher quality CAD models with proper solid geometry
-- Support for STEP, STL, and 3MF formats
-- Better integration with CAD software
-- Cleaner, more parametric terrain representations
-- Improved water body representation
-
-## Installation
-
-1. Clone this repository
+The easiest way to run the generator is using the provided Docker container:
 
 ```bash
-git clone https://github.com/yourusername/world-to-model.git
-cd world-to-model
+# Pull and run with the helper script
+./run.sh --config configs/sf_fidi.yaml
+
+# Or run directly with Docker
+docker run --rm \
+    -v "$PWD/configs:/app/configs" \
+    -v "$PWD/topo:/app/topo" \
+    -v "$PWD/outputs:/app/outputs" \
+    ghcr.io/rdudhagra/world-to-model:latest \
+    --config configs/sf_fidi.yaml
 ```
 
-2. Create a conda environment with required dependencies
+### Native Installation (Conda)
+
+The project requires conda due to complex dependencies (meshlib, GDAL, rasterio):
 
 ```bash
+# Clone the repository
+git clone https://github.com/rdudhagra/world-to-model.git
+cd world-to-model
+
+# Create conda environment
 conda env create -f environment.yml
 conda activate world-to-model
+
+# Run the generator
+python generate.py --config configs/sf_fidi.yaml
 ```
 
-Or install with pip:
+## Configuration
+
+The generator is driven by YAML configuration files. See `configs/template.yaml` for a fully documented example.
+
+### Basic Usage
 
 ```bash
-pip install -r requirements.txt
+# Run with a configuration file
+python generate.py --config configs/sf_fidi.yaml
+
+# Run a specific job from a multi-job config
+python generate.py --config configs/bay_area.yaml --job sf_downtown
+
+# Override output directory
+python generate.py --config configs/sf_fidi.yaml --outdir ./my_outputs
 ```
 
-3. Download SRTM data for your region of interest. Place the SRTM data files (.hgt.zip) in a directory named `topo` in the project root.
+### CLI Arguments
 
-## Quick Demo
+| Argument | Description |
+|----------|-------------|
+| `--config` | Path to YAML configuration file (required) |
+| `--job` | Run only the named job (matches `name` or `output_prefix`) |
+| `--outdir` | Override output directory for all jobs |
 
-Want to see the beautiful new console output in action? Run the demo:
+### Configuration File Structure
+
+```yaml
+version: 1
+name: my_terrain
+output_prefix: my_terrain
+
+bounds: [-122.42, 37.77, -122.38, 37.80]  # [min_lon, min_lat, max_lon, max_lat]
+
+elevation_source:
+  type: srtm  # or "geotiff"
+  topo_dir: topo
+
+terrain:
+  elevation_multiplier: 1.0
+  water_threshold: 0
+  adaptive_tolerance_z: 1.0
+
+buildings:
+  enabled: true
+  timeout: 120
+
+output:
+  directory: outputs/my_terrain
+```
+
+See `configs/template.yaml` for all available options.
+
+## Elevation Data
+
+### SRTM Data
+
+Place SRTM tiles (`.hgt.zip` files) in the `topo/` directory. Files follow the naming convention `N37W122.SRTMGL3.hgt.zip`.
+
+Download SRTM data from:
+- [USGS EarthExplorer](https://earthexplorer.usgs.gov/)
+- [OpenTopography](https://opentopography.org/)
+
+### GeoTIFF Data
+
+For higher resolution, use GeoTIFF files. Configure in your YAML:
+
+```yaml
+elevation_source:
+  type: geotiff
+  topo_dir: topo
+  glob: "USGS_*.tif"  # or specify individual files
+```
+
+## Output Files
+
+The generator creates STL files in the output directory:
+
+| File | Description |
+|------|-------------|
+| `{prefix}_land.stl` | Terrain mesh (above water level) |
+| `{prefix}_base.stl` | Base/platform mesh with joints |
+| `{prefix}_buildings.stl` | Building footprints (if enabled) |
+
+## Building Extraction
+
+Extract 3D-ready building data from OpenStreetMap:
+
+```python
+from terrain_generator.buildingsextractor import BuildingsExtractor
+
+# Create extractor with caching
+extractor = BuildingsExtractor(use_cache=True, cache_max_age_days=30)
+
+# Extract buildings for a bounding box
+bounds = (-122.42, 37.77, -122.38, 37.80)  # Downtown San Francisco
+buildings = extractor.extract_buildings(bounds)
+
+# Print statistics
+extractor.print_stats()
+
+# Access building data
+for building in buildings[:5]:
+    print(f"Building {building.osm_id}: {building.building_type}")
+    print(f"  Area: {building.area:.0f} m²")
+    print(f"  Height: {building.height:.1f} m")
+```
+
+## Docker Container
+
+### Building Locally
+
+```bash
+docker build -t world-to-model .
+```
+
+### Running the Container
+
+```bash
+# Using the helper script (recommended)
+./run.sh --config configs/sf_fidi.yaml
+
+# Manual Docker run
+docker run --rm \
+    -v "$PWD/configs:/app/configs:ro" \
+    -v "$PWD/topo:/app/topo:ro" \
+    -v "$PWD/outputs:/app/outputs" \
+    world-to-model --config configs/sf_fidi.yaml
+```
+
+### Volume Mounts
+
+| Mount | Purpose |
+|-------|---------|
+| `/app/configs` | Configuration files |
+| `/app/topo` | Elevation data (SRTM/GeoTIFF) |
+| `/app/outputs` | Generated STL files |
+
+## Development
+
+### Running Tests
+
+```bash
+conda activate world-to-model
+python scripts/test_buildings_processor.py
+```
+
+### Console Demo
+
+See the rich console output in action:
 
 ```bash
 python demo_console.py
 ```
 
-This will showcase all the colorful output features including:
-- Progress bars and status messages
-- Formatted tables and statistics
-- Error handling and warnings
-- File operations and cache management
-- A complete realistic workflow simulation
+## Project Structure
 
-## Usage
-
-### Terrain Generation
-
-Run the script with your desired region's coordinates:
-
-```bash
-python main.py --min-lon -122.673340 --min-lat 37.225955 --max-lon -121.753235 --max-lat 38.184228 --output-prefix bay_area
 ```
-
-The new console output will show you:
-- ✓ Colorful progress indicators
-- 📊 Formatted statistics tables  
-- ⚠️ Clear warnings and errors
-- 💾 Cache status and file operations
-
-### Adaptive Terrain Meshing
-
-Terrain meshes are constructed on an adaptive grid, which reduces rows/columns in areas that are flat or have consistent slope by applying a 1D Ramer–Douglas–Peucker (RDP) tolerance along rows and columns. This replaces the previous runtime decimation and is more stable at large scales.
-
-Tune under `terrain` in your YAML:
-
-- `adaptive_tolerance_z` (meters): Z tolerance for simplification; higher yields fewer faces (e.g., 1.0–5.0).
-- `adaptive_max_gap_fraction`: Max fraction of original resolution allowed as a single cell (default 1/256 ≈ 0.0039).
-- `adaptive_max_sampled_rows` / `adaptive_max_sampled_cols`: Cap for RDP sampling passes to bound runtime (default 400 each).
-
-Deprecated: `decimate`, `decimate_max_error`, `decimate_target_face_count`, `decimate_preserve_boundary` are removed.
-
-### 3D-Ready Building Data Extraction
-
-Use the `buildings.py` module to extract 3D-ready building data:
-
-```python
-from terrain_generator.buildings import BuildingsExtractor
-
-# Create extractor with caching enabled
-extractor = BuildingsExtractor(use_cache=True, cache_max_age_days=30)
-
-# Extract buildings for a bounding box (min_lon, min_lat, max_lon, max_lat)
-bounds = (-122.42, 37.77, -122.38, 37.80)  # Downtown San Francisco
-buildings = extractor.extract_buildings(bounds)
-
-# Print beautiful formatted statistics
-extractor.print_stats()
-
-# Access individual building data (all buildings guaranteed to have polygon + height)
-for building in buildings[:5]:
-    print(f"Building {building.osm_id}: {building.building_type}")
-    print(f"  Area: {building.area:.0f} m²")  # Always available
-    print(f"  Height: {building.height:.1f} m")  # Always available
-    print(f"  Coordinates: {len(building.polygon.exterior.coords)} points")  # Always available
+world-to-model/
+├── generate.py              # Main entry point
+├── terrain_generator/       # Core library
+│   ├── buildingsextractor.py
+│   ├── buildingsgenerator.py
+│   ├── buildingsprocessor.py
+│   ├── basegenerator.py
+│   ├── modelgenerator.py
+│   ├── elevation.py
+│   ├── srtm.py
+│   ├── geotiff.py
+│   └── console.py
+├── configs/                 # Example configurations
+│   ├── template.yaml
+│   ├── bay_area.yaml
+│   ├── sf_fidi.yaml
+│   └── sf_full.yaml
+├── scripts/                 # Utility scripts
+├── topo/                    # Elevation data (not in repo)
+└── outputs/                 # Generated files (not in repo)
 ```
-
-The extraction process now includes:
-- �� Real-time progress tracking
-- 📈 Detailed statistics in formatted tables
-- 💾 Visual cache status updates
-- ✨ Color-coded success/warning/error messages
-
-### Console Output Features
-
-The new console system provides:
-
-#### Message Types
-- **Info** (ℹ): General information and status updates
-- **Success** (✓): Successful operations and completions
-- **Warning** (⚠): Non-critical issues and alerts
-- **Error** (✗): Critical errors and failures
-- **Progress** (⟳): Ongoing operations and progress
-
-#### Structured Display
-- **Headers**: Large, prominent section titles with borders
-- **Tables**: Formatted statistics and data in aligned columns
-- **Progress Bars**: Visual feedback for long-running operations
-- **File Operations**: Clear indication of saved files and formats
-
-#### Color Scheme
-- 🔵 **Primary**: Cyan for headers and main elements
-- 🟢 **Success**: Green for completed operations
-- 🟡 **Warning**: Yellow for cautions and alerts
-- 🔴 **Error**: Red for failures and critical issues
-- 🟣 **Accent**: Magenta for progress and special operations
-
-## Command-line Arguments
-
-| Argument | Description | Default |
-|----------|-------------|---------|
-| `--min-lon` | Minimum longitude of the region | Required |
-| `--min-lat` | Minimum latitude of the region | Required |
-| `--max-lon` | Maximum longitude of the region | Required |
-| `--max-lat` | Maximum latitude of the region | Required |
-| `--topo-dir` | Directory containing SRTM data | "topo" |
-| `--detail-level` | Level of detail (0.01-1.0) | 0.2 |
-| `--output-prefix` | Prefix for output files | "terrain" |
-| `--water-level` | Elevation value for water areas | 0.0 |
-| `--height-scale` | Scale factor for height | 0.05 |
-| `--export-format` | Format to export (step, stl, 3mf) | "step" |
-
-## Examples
-
-### Terrain Generation
-Generate a 3D model of the San Francisco Bay Area:
-
-```bash
-python main.py --min-lon -122.673340 --min-lat 37.225955 --max-lon -121.753235 --max-lat 38.184228 --water-level 0 --detail-level 0.2 --output-prefix sf_bay_area --export-format step
-```
-
-### 3D-Ready Building Extraction
-Extract 3D-ready buildings for downtown Oakland:
-
-```python
-from terrain_generator.buildings import BuildingsExtractor
-
-# Downtown Oakland bounds
-bounds = (-122.28, 37.79, -122.25, 37.82)
-
-extractor = BuildingsExtractor()
-buildings = extractor.extract_buildings(bounds)
-
-# All buildings are guaranteed to have both geometry and height
-print(f"Extracted {len(buildings)} 3D-ready buildings")
-
-# Filter by building type
-hotels = [b for b in buildings if 'hotel' in b.building_type.lower()]
-offices = [b for b in buildings if 'office' in b.building_type.lower()]
-
-print(f"Found {len(hotels)} hotels and {len(offices)} office buildings")
-
-# Find tallest buildings (all have height data)
-tallest = sorted(buildings, key=lambda b: b.height, reverse=True)[:10]
-for i, building in enumerate(tallest):
-    print(f"{i+1}. {building.height:.1f}m - {building.building_type}")
-```
-
-## 3D Modeling Benefits
-
-The 3D-focused building extraction provides several advantages:
-
-- **Guaranteed Data Quality**: Every building has both polygon geometry and height information
-- **3D Modeling Ready**: No need to filter or validate data before 3D modeling
-- **Smaller Datasets**: More efficient storage and processing (71% of buildings have height data)
-- **Better Performance**: Focused queries reduce API load and processing time
-- **Reliable Heights**: Uses explicit height tags or estimates from building levels
-
-## Tips for Better Results
-
-- Use an appropriate `detail-level` (lower values create simpler models but process faster)
-- Set the `water-level` parameter to match the water elevation in your region
-- Choose the right export format:
-  - STEP for CAD software
-  - STL for 3D printing
-  - 3MF for modern 3D printing workflows
-- For building extraction, use smaller bounding boxes for faster processing
-- All extracted buildings are 3D-ready with guaranteed polygon and height data
-- Cache is automatically managed, but you can clear it if you need fresh data
 
 ## License
 
@@ -265,5 +236,5 @@ MIT
 
 - SRTM data provided by NASA/USGS
 - Building data from OpenStreetMap contributors
-- CadQuery for CAD modeling capabilities
-- PyProj for coordinate transformations
+- [MeshLib](https://github.com/MeshInspector/MeshLib) for mesh processing
+- [Rasterio](https://rasterio.readthedocs.io/) for geospatial raster I/O

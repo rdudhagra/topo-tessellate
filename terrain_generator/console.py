@@ -9,9 +9,8 @@ Uses the rich library for beautiful terminal output with colors, progress bars, 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, TaskID, track
+from rich.progress import Progress
 from rich.text import Text
-from rich.tree import Tree
 from rich import box
 from typing import Dict, List, Optional, Any
 import time

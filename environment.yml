@@ -3,20 +3,18 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.9
+  - python=3.10
   - numpy
   - rasterio
   - gdal
   - scipy
   - matplotlib
-  - tqdm
-  - cadquery
   - geopy
   - requests
   - rich>=13.0.0
   - scikit-image
+  - shapely
   - pyyaml
   - pip
   - pip:
-    - git+https://github.com/JustinSDK/cqMore
     - meshlib

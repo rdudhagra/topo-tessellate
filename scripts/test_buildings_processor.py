@@ -29,7 +29,6 @@ class BuildingsProcessorTest:
     """Test suite for BuildingsProcessor and BuildingsGeoBins classes."""
     
     def __init__(self):
-        self.processor = BuildingsProcessor()
         self.test_buildings = []
         self.test_results = []
     
@@ -136,7 +135,8 @@ class BuildingsProcessorTest:
         # Define a bbox that should include buildings 1, 2, and 6 (downtown SF area)
         bbox = (-122.425, 37.770, -122.395, 37.790)
         
-        filtered = self.processor.exclude_buildings_outside_bbox(buildings, bbox)
+        processor = BuildingsProcessor(buildings)
+        filtered = processor.exclude_buildings_outside_bbox(bbox)
         
         expected_ids = {1, 2, 6}  # Buildings that should be included
         actual_ids = {b.osm_id for b in filtered}
@@ -165,7 +165,8 @@ class BuildingsProcessorTest:
         # Test 1: Empty bbox (impossible bbox)
         try:
             empty_bbox = (-122.400, 37.780, -122.410, 37.770)  # min > max
-            filtered = self.processor.exclude_buildings_outside_bbox(buildings, empty_bbox)
+            processor = BuildingsProcessor(list(buildings))  # Make a copy
+            filtered = processor.exclude_buildings_outside_bbox(empty_bbox)
             output.info(f"Empty bbox test: {len(filtered)} buildings (expected: 0)")
             if len(filtered) == 0:
                 output.success("✓ Empty bbox test passed")
@@ -177,7 +178,8 @@ class BuildingsProcessorTest:
         
         # Test 2: Very large bbox (should include all buildings)
         large_bbox = (-123.0, 37.0, -121.0, 38.0)
-        filtered = self.processor.exclude_buildings_outside_bbox(buildings, large_bbox)
+        processor = BuildingsProcessor(list(buildings))  # Make a copy
+        filtered = processor.exclude_buildings_outside_bbox(large_bbox)
         output.info(f"Large bbox test: {len(filtered)} buildings (expected: {len(buildings)})")
         if len(filtered) == len(buildings):
             output.success("✓ Large bbox test passed")
@@ -187,7 +189,8 @@ class BuildingsProcessorTest:
         
         # Test 3: Very small bbox (should include very few or no buildings)
         small_bbox = (-122.4001, 37.7801, -122.4000, 37.7802)
-        filtered = self.processor.exclude_buildings_outside_bbox(buildings, small_bbox)
+        processor = BuildingsProcessor(list(buildings))  # Make a copy
+        filtered = processor.exclude_buildings_outside_bbox(small_bbox)
         output.info(f"Small bbox test: {len(filtered)} buildings (expected: 0-1)")
         if len(filtered) <= 1:
             output.success("✓ Small bbox test passed")
@@ -196,7 +199,8 @@ class BuildingsProcessorTest:
             all_passed = False
         
         # Test 4: Empty building list
-        filtered = self.processor.exclude_buildings_outside_bbox([], large_bbox)
+        processor = BuildingsProcessor([])
+        filtered = processor.exclude_buildings_outside_bbox(large_bbox)
         output.info(f"Empty building list test: {len(filtered)} buildings (expected: 0)")
         if len(filtered) == 0:
             output.success("✓ Empty building list test passed")
@@ -283,28 +287,29 @@ class BuildingsProcessorTest:
         
         all_passed = True
         
-        # Test cases: (lat, lon, radius_meters, description)
+        # Test cases: (x, y, radius_meters, description) - x, y are in meters relative to min point
+        # Since buildings are near the geo_bins reference point, we use small offsets
         test_cases = [
-            (37.775, -122.420, 100, "Small radius around building 1"),
-            (37.780, -122.402, 500, "Medium radius around building 2"),
-            (37.775, -122.407, 1000, "Large radius in central area"),
-            (37.900, -122.300, 100, "Small radius in empty area"),
+            (0, 0, 100, "Small radius near origin"),
+            (500, 500, 500, "Medium radius offset from origin"),
+            (1000, 1000, 1000, "Large radius further out"),
+            (50000, 50000, 100, "Small radius in empty area"),
         ]
         
-        for lat, lon, radius, description in test_cases:
+        for x, y, radius, description in test_cases:
             try:
                 start_time = time.time()
-                found_buildings = geo_bins.get_buildings_in_radius(lat, lon, radius)
+                found_wrappers = geo_bins.get_building_wrappers_within_radius(x, y, radius)
                 search_time = (time.time() - start_time) * 1000  # Convert to milliseconds
                 
                 output.info(f"{description}:")
-                output.info(f"  Location: ({lat:.6f}, {lon:.6f})")
+                output.info(f"  Location: ({x}, {y}) meters")
                 output.info(f"  Radius: {radius}m")
-                output.info(f"  Found buildings: {len(found_buildings)}")
+                output.info(f"  Found buildings: {len(found_wrappers)}")
                 output.info(f"  Search time: {search_time:.2f}ms")
                 
                 # Basic validation: found buildings should be unique
-                found_ids = [b.osm_id for b in found_buildings]
+                found_ids = [w.building.osm_id for w in found_wrappers]
                 if len(found_ids) == len(set(found_ids)):
                     output.success(f"✓ {description} - no duplicates")
                 else:
@@ -376,7 +381,8 @@ class BuildingsProcessorTest:
                 # Test bbox filtering performance
                 bbox = (-122.45, 37.75, -122.35, 37.85)
                 start_time = time.time()
-                filtered = self.processor.exclude_buildings_outside_bbox(buildings, bbox)
+                processor = BuildingsProcessor(list(buildings))
+                filtered = processor.exclude_buildings_outside_bbox(bbox)
                 bbox_time = time.time() - start_time
                 
                 # Test geo bins creation performance
@@ -384,9 +390,9 @@ class BuildingsProcessorTest:
                 geo_bins = BuildingsGeoBins(buildings, bin_size_meters=100, debug=False)
                 bins_creation_time = time.time() - start_time
                 
-                # Test radius search performance
+                # Test radius search performance (using meters from origin)
                 start_time = time.time()
-                found = geo_bins.get_buildings_in_radius(37.78, -122.42, 500)
+                found = geo_bins.get_building_wrappers_within_radius(5000, 5000, 500)
                 radius_search_time = time.time() - start_time
                 
                 output.info(f"  Building creation: {creation_time:.3f}s")

@@ -744,17 +744,6 @@ if __name__ == "__main__":
         output.info(f"  Height: {building.height:.1f} m")
         output.info(f"  Coordinates: {len(building.polygon.exterior.coords)} points")
 
-        # Check if height was explicit or default
-        has_explicit = (
-            "height" in building.tags
-            or "building:height" in building.tags
-            or "building:levels" in building.tags
-        )
-        height_source = (
-            "explicit" if has_explicit else f"default ({extractor.DEFAULT_HEIGHT}m)"
-        )
-        output.info(f"  Height source: {height_source}")
-
     # Demonstrate cache usage
     output.info(f"\n=== Demonstrating Cache ===")
     output.info("Running the same query again (should load from cache)...")
