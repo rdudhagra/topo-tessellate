@@ -10,24 +10,26 @@ Generate 3D-printable terrain models from real-world elevation and building data
 ## Quick Start
 
 ```bash
-# 1. Download the helper scripts
-curl -fsSL https://github.com/rdudhagra/topo-tessellate/releases/latest/download/download-dem.sh -o download-dem.sh
-curl -fsSL https://github.com/rdudhagra/topo-tessellate/releases/latest/download/create-config.sh -o create-config.sh
-chmod +x download-dem.sh create-config.sh
+# 1. Create a config file (interactive wizard)
+bash <(curl -fsSL https://raw.githubusercontent.com/rdudhagra/topo-tessellate/main/create-config.sh) configs/my_terrain.yaml
 
-# 2. Create a config file (interactive wizard)
-./create-config.sh configs/my_terrain.yaml
+# 2. Download elevation data for your config
+bash <(curl -fsSL https://raw.githubusercontent.com/rdudhagra/topo-tessellate/main/download-dem.sh) --config configs/my_terrain.yaml --topo-dir ./topo
 
-# 3. Download elevation data for your config
-./download-dem.sh --config configs/my_terrain.yaml --topo-dir ./topo
-
-# 4. Generate the terrain model
+# 3. Generate the terrain model
 docker run --rm \
     -v "$PWD/configs:/app/configs:ro" \
     -v "$PWD/topo:/app/topo:ro" \
     -v "$PWD/outputs:/app/outputs" \
     ghcr.io/rdudhagra/topo-tessellate:latest \
     --config configs/my_terrain.yaml
+```
+
+Or download the scripts locally:
+```bash
+curl -fsSL https://raw.githubusercontent.com/rdudhagra/topo-tessellate/main/create-config.sh -o create-config.sh
+curl -fsSL https://raw.githubusercontent.com/rdudhagra/topo-tessellate/main/download-dem.sh -o download-dem.sh
+chmod +x create-config.sh download-dem.sh
 ```
 
 ## License
