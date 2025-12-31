@@ -68,3 +68,4 @@ analysis/
 
 # Overrides
 !models/*.stl
+!images/*.png
