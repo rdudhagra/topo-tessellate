@@ -144,18 +144,16 @@ You'll see progress information showing which files are being downloaded. When c
 Now you're ready to generate your 3D terrain model! Run this command:
 
 ```bash
-docker run --rm \
-    -v "$PWD/configs:/app/configs:ro" \
-    -v "$PWD/topo:/app/topo:ro" \
-    -v "$PWD/outputs:/app/outputs" \
-    ghcr.io/rdudhagra/topo-tessellate:latest \
-    --config configs/my_terrain.yaml
+bash <(curl -fsSL https://raw.githubusercontent.com/rdudhagra/topo-tessellate/main/run.sh) \
+    --config configs/my_terrain.yaml \
+    --topo-dir ./topo \
+    --output-dir ./outputs
 ```
 
 **What this does:**
-- `docker run` starts the terrain generator inside a container
-- `-v` mounts your local folders so the container can access your files
-- The generator reads your config, processes the elevation data, and creates 3D models
+- Downloads and runs the terrain generator inside a Docker container
+- Reads your config file and processes the elevation data
+- Creates 3D-printable STL files in your output folder
 
 **This may take several minutes** depending on the size and complexity of your area.
 

@@ -1,28 +1,46 @@
 #!/bin/bash
 # Topo-tessellate Runner Script
-# Pulls the container from GHCR or builds locally, then runs the generator
+# Runs the terrain generator inside the Docker container
+#
+# Usage:
+#   ./run.sh --config configs/my_config.yaml --topo-dir ./topo --output-dir ./outputs
+#
+# All directories will be mounted into the container.
 
 set -e
 
 IMAGE="ghcr.io/rdudhagra/topo-tessellate:latest"
-LOCAL_IMAGE="topo-tessellate:local"
 
 # Color output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-info() {
-    echo -e "${GREEN}[INFO]${NC} $1" >&2
-}
+info() { echo -e "${GREEN}[INFO]${NC} $1" >&2; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
+error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
-warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1" >&2
-}
+usage() {
+    cat <<EOF
+Topo-Tessellate Terrain Generator
 
-error() {
-    echo -e "${RED}[ERROR]${NC} $1" >&2
+Usage: $0 --config <config.yaml> --topo-dir <directory> --output-dir <directory> [OPTIONS]
+
+Required:
+  --config <file>       Path to YAML configuration file
+  --topo-dir <dir>      Directory containing elevation data (GeoTIFF files)
+  --output-dir <dir>    Directory to save generated STL files
+
+Options:
+  --job <name>          Run only the named job (for multi-job configs)
+  -h, --help            Show this help message
+
+Example:
+  $0 --config configs/sf_fidi.yaml --topo-dir ./topo --output-dir ./outputs
+
+EOF
+    exit 0
 }
 
 # Check for Docker
@@ -31,81 +49,98 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Get script directory for relative paths
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Parse arguments
+CONFIG=""
+TOPO_DIR=""
+OUTPUT_DIR=""
+EXTRA_ARGS=()
 
-# Create output directory if it doesn't exist
-mkdir -p "${SCRIPT_DIR}/outputs"
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --config)
+            CONFIG="$2"
+            shift 2
+            ;;
+        --topo-dir)
+            TOPO_DIR="$2"
+            shift 2
+            ;;
+        --output-dir)
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --job)
+            EXTRA_ARGS+=("--job" "$2")
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            error "Unknown option: $1"
+            usage
+            ;;
+    esac
+done
 
-# Try to use the image in this order:
-# 1. If GHCR image is available locally, use it
-# 2. Try to pull from GHCR
-# 3. Fall back to building locally
-get_image() {
-    # Check if GHCR image exists locally
-    if docker image inspect "$IMAGE" &>/dev/null; then
-        info "Using cached GHCR image: $IMAGE"
-        echo "$IMAGE"
-        return
-    fi
-
-    # Try to pull from GHCR
-    info "Attempting to pull from GHCR: $IMAGE"
-    if docker pull "$IMAGE" 2>/dev/null; then
-        info "Successfully pulled: $IMAGE"
-        echo "$IMAGE"
-        return
-    fi
-
-    warn "Could not pull from GHCR, building locally..."
-
-    # Build locally
-    if docker build -t "$LOCAL_IMAGE" "$SCRIPT_DIR"; then
-        info "Successfully built local image: $LOCAL_IMAGE"
-        echo "$LOCAL_IMAGE"
-        return
-    else
-        error "Failed to build local image"
-        exit 1
-    fi
-}
-
-# Show usage if no arguments
-if [ $# -eq 0 ]; then
-    echo "Topo-tessellate Terrain Generator"
-    echo ""
-    echo "Usage: $0 [OPTIONS]"
-    echo ""
-    echo "Examples:"
-    echo "  $0 --config configs/sf_fidi.yaml"
-    echo "  $0 --config configs/bay_area.yaml --job sf_downtown"
-    echo "  $0 --help"
-    echo ""
-    echo "The script will:"
-    echo "  1. Pull the container from ghcr.io (if available)"
-    echo "  2. Or build locally from Dockerfile"
-    echo "  3. Mount configs/, topo/, and outputs/ directories"
-    echo "  4. Run the generator with your arguments"
-    echo ""
-
-    # Still get the image and show help
-    FINAL_IMAGE=$(get_image)
-    docker run --rm "$FINAL_IMAGE" --help
-    exit 0
+# Validate required arguments
+if [[ -z "$CONFIG" ]]; then
+    error "Missing required argument: --config"
+    usage
 fi
 
-# Get the image to use
-FINAL_IMAGE=$(get_image)
+if [[ -z "$TOPO_DIR" ]]; then
+    error "Missing required argument: --topo-dir"
+    usage
+fi
 
-info "Running: docker run with image $FINAL_IMAGE"
+if [[ -z "$OUTPUT_DIR" ]]; then
+    error "Missing required argument: --output-dir"
+    usage
+fi
+
+# Check config file exists
+if [[ ! -f "$CONFIG" ]]; then
+    error "Config file not found: $CONFIG"
+    exit 1
+fi
+
+# Check topo directory exists
+if [[ ! -d "$TOPO_DIR" ]]; then
+    error "Topo directory not found: $TOPO_DIR"
+    error "Run download-dem.sh first to download elevation data."
+    exit 1
+fi
+
+# Create output directory if it doesn't exist
+mkdir -p "$OUTPUT_DIR"
+
+# Convert to absolute paths
+CONFIG_ABS="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
+TOPO_ABS="$(cd "$TOPO_DIR" && pwd)"
+OUTPUT_ABS="$(cd "$OUTPUT_DIR" && pwd)"
+
+# Get config directory and filename
+CONFIG_DIR="$(dirname "$CONFIG_ABS")"
+CONFIG_FILE="$(basename "$CONFIG_ABS")"
+
+# Always pull the latest image
+info "Pulling latest container image..."
+docker pull "$IMAGE" --quiet
+
+info "Generating terrain model..."
+info "  Config: $CONFIG"
+info "  Topo:   $TOPO_DIR"
+info "  Output: $OUTPUT_DIR"
 
 # Run the container with mounts
 docker run --rm \
-    -v "${SCRIPT_DIR}/configs:/app/configs:ro" \
-    -v "${SCRIPT_DIR}/topo:/app/topo:ro" \
-    -v "${SCRIPT_DIR}/outputs:/app/outputs" \
-    "$FINAL_IMAGE" "$@"
+    -v "${CONFIG_DIR}:/app/configs:ro" \
+    -v "${TOPO_ABS}:/app/topo:ro" \
+    -v "${OUTPUT_ABS}:/app/outputs" \
+    "$IMAGE" \
+    --config "/app/configs/${CONFIG_FILE}" \
+    --outdir /app/outputs \
+    "${EXTRA_ARGS[@]}"
 
-info "Done! Check the outputs/ directory for results."
-
-
+info "Done! Check $OUTPUT_DIR for generated STL files."
