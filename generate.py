@@ -135,7 +135,6 @@ def _base_defaults() -> Dict[str, Any]:
 
 def _tiling_defaults() -> Dict[str, Any]:
     return {
-        "enabled": False,
         "rows": 1,
         "cols": 1,
     }
@@ -319,7 +318,6 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
     
     # Tiling (separate section)
     tiling_cfg = _merge(_tiling_defaults(), job_cfg.get("tiling", {}))
-    tile_enabled = bool(tiling_cfg.get("enabled", False))
     tile_rows = max(1, int(tiling_cfg.get("rows", 1)))
     tile_cols = max(1, int(tiling_cfg.get("cols", 1)))
 
@@ -371,7 +369,7 @@ def run_job(job_cfg: Dict[str, Any], global_output_dir: Optional[str] = None, on
 
     # Result entries: (prefix, terrain_result, tile_bounds, buildings_mesh, base_mesh, tile_row, tile_col)
     results: List[Tuple[str, Dict[str, Any], Tuple[float, float, float, float], Optional[Any], Optional[Any], int, int]] = []
-    if tile_enabled and (tile_rows > 1 or tile_cols > 1):
+    if tile_rows > 1 or tile_cols > 1:
         min_lon, min_lat, max_lon, max_lat = bounds
         dlon = (max_lon - min_lon) / float(tile_cols)
         dlat = (max_lat - min_lat) / float(tile_rows)

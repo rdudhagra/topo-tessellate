@@ -34,7 +34,6 @@ buildings:
     min_building_height: 25
 
 tiling:
-  enabled: true
   rows: 3
   cols: 3
 

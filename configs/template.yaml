@@ -86,10 +86,9 @@
 #     building_height_multiplier: 1.0   # Scales OSM/derived heights. 2.0 doubles heights.
 #     min_building_height: 10.0         # [meters] Lower bound to avoid ultra-thin buildings.
 #
-# tiling:                          # OPTIONAL. Controls tiling & per-tile scaling (exported per tile).
-#   enabled: false                 # If true, split bounds into a grid and export each tile separately.
-#   rows: 1                        # Number of tile rows
-#   cols: 1                        # Number of tile columns
+# tiling:                          # OPTIONAL. Controls tiling & per-tile scaling.
+#   rows: 1                        # Number of tile rows (1 = no vertical splitting)
+#   cols: 1                        # Number of tile columns (1 = no horizontal splitting)
 
 # output:
 #   directory: outputs/dc         # Directory to write .obj files (land, base, buildings, merged if enabled).
