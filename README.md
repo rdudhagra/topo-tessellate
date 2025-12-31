@@ -108,7 +108,8 @@ The wizard will ask you several questions. Here's what each one means:
 | **Elevation multiplier** | Vertical exaggeration (1 = real scale, 2 = double height) |
 | **Downsample factor** | Resolution reduction (1 = highest detail, 10 = faster/smaller files) |
 | **Enable buildings** | Whether to include 3D buildings from OpenStreetMap (y/n) |
-| **Enable tiling** | Split into multiple pieces for large prints (y/n) |
+| **Tile rows** | Number of rows to split model into (1 = no splitting) |
+| **Tile columns** | Number of columns to split model into (1 = no splitting) |
 | **Output directory** | Where to save the generated files |
 
 Press **Enter** to accept the default value shown in brackets.

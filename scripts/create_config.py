@@ -325,28 +325,24 @@ def main():
     print("\n" + "=" * 60)
     print("  TILING SETTINGS")
     print("=" * 60)
+    print("\nSplit your model into a grid of tiles for large prints.")
+    print("Use 1x1 for a single piece, or more for interlocking tiles.")
     
-    tiling_enabled = parse_yes_no(prompt(
-        "Enable tiling? (split into multiple pieces for large prints) (y/n)",
-        default="n",
-        validator=validate_yes_no
+    rows = int(prompt(
+        "Number of tile rows (1 = no vertical splitting)",
+        default="1",
+        validator=validate_positive_int
+    ))
+    cols = int(prompt(
+        "Number of tile columns (1 = no horizontal splitting)",
+        default="1",
+        validator=validate_positive_int
     ))
     
-    config["tiling"] = {"enabled": tiling_enabled}
-    
-    if tiling_enabled:
-        rows = int(prompt(
-            "Number of tile rows",
-            default="2",
-            validator=validate_positive_int
-        ))
-        cols = int(prompt(
-            "Number of tile columns",
-            default="2",
-            validator=validate_positive_int
-        ))
-        config["tiling"]["rows"] = rows
-        config["tiling"]["cols"] = cols
+    config["tiling"] = {
+        "rows": rows,
+        "cols": cols
+    }
     
     # ==================== Output ====================
     print("\n" + "=" * 60)
