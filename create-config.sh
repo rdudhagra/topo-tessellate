@@ -64,11 +64,9 @@ else
     CONFIG_DIR="$(cd "$CONFIG_DIR" && pwd)"
 fi
 
-# Pull image if needed
-if ! docker image inspect "$IMAGE" &>/dev/null; then
-    info "Pulling container image: $IMAGE"
-    docker pull "$IMAGE"
-fi
+# Always pull the latest image
+info "Pulling latest container image..."
+docker pull "$IMAGE" --quiet
 
 info "Starting interactive configuration wizard..."
 

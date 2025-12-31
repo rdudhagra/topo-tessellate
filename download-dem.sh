@@ -107,11 +107,9 @@ TOPO_ABS="$(cd "$TOPO_DIR" && pwd)"
 CONFIG_DIR="$(dirname "$CONFIG_ABS")"
 CONFIG_FILE="$(basename "$CONFIG_ABS")"
 
-# Pull image if needed
-if ! docker image inspect "$IMAGE" &>/dev/null; then
-    info "Pulling container image: $IMAGE"
-    docker pull "$IMAGE"
-fi
+# Always pull the latest image
+info "Pulling latest container image..."
+docker pull "$IMAGE" --quiet
 
 info "Downloading DEM data..."
 info "  Config: $CONFIG"
