@@ -91,7 +91,7 @@
 #   cols: 1                        # Number of tile columns (1 = no horizontal splitting)
 
 # output:
-#   directory: outputs/dc         # Directory to write .obj files (land, base, buildings, merged if enabled).
+#   directory: outputs/dc         # Directory to write .stl files (land, base, buildings, merged if enabled).
 #   save_merged: false            # If true and terrain.merge_land_and_base is true, also write the merged mesh.
 #   merged_filename: dc_merged.obj  # Optional custom name for merged mesh file.
 

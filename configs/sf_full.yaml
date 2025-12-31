@@ -38,6 +38,6 @@ tiling:
   cols: 3
 
 output:
-  directory: sf_full
+  directory: ./outputs/sf_full
 
 

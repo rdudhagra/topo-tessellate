@@ -28,6 +28,6 @@ buildings:
     min_building_height: 100
 
 output:
-  directory: .
+  directory: ./outputs/bay_area
 
 
