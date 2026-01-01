@@ -44,7 +44,7 @@ I recommend printing all these parts with a stronger material such as ASA.
 
 ### [Cleat](../models/cleat.stl)
 Small wedge with countersunk screw holes. This slides into the cutout on the back of the `base`.
-![](../models/cleat.stl)
+![](../images/cleat.png)
 
 ### Dovetail Joint
 The dovetail joint piece comprises of three unique parts. The left/right joints slide into the dovetail cutouts in the base, and the screws push them outwards, creating a tight joint.
@@ -53,13 +53,13 @@ The dovetail joint piece comprises of three unique parts. The left/right joints 
 
 For each joint, you will need to print:
 #### (1) [Left Joint](../models/joint_left.stl)
-![](../models/joint_left.stl)
+![](../images/joint_left.png)
 
 #### (1) [Right Joint](../models/joint_right.stl)
-![](../models/joint_right.stl)
+![](../images/joint_right.png)
 
-#### (3) [Screw](../models/screw.stl)
-![](../models/screw.stl)
+#### (3) [Joint Screw](../models/joint_screw.stl)
+![](../images/joint_screw.png)
 
 #### (optional) [8mm hex driver](../models/screwdriver.stl)
-![](../models/screwdriver.stl)
+![](../images/screwdriver.png)
