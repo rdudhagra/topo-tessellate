@@ -35,3 +35,31 @@ Here are few tips for the cleanest results when printing:
 2. I achieved the most aesthetic results with matte PLA.
 3. Glow-in-the-dark PLA for the buildings is a nice touch; however, note that the glow effect is extremely weak.
 4. For the smoothest top-layer on the base, I recommend fine-tuning your ironing settings first.
+
+## Additional Parts
+
+You will need to 3D print some additional parts to aide in joining tiles together and optionally wall-mounting the result.
+
+I recommend printing all these parts with a stronger material such as ASA.
+
+### [Cleat](../models/cleat.stl)
+Small wedge with countersunk screw holes. This slides into the cutout on the back of the `base`.
+![](../models/cleat.stl)
+
+### Dovetail Joint
+The dovetail joint piece comprises of three unique parts. The left/right joints slide into the dovetail cutouts in the base, and the screws push them outwards, creating a tight joint.
+
+> NOTE: The LEFT and RIGHT joints are slightly different (the threads are offset by 1/2 thread). DO NOT just mirror the joints in your slicer!
+
+For each joint, you will need to print:
+#### (1) [Left Joint](../models/joint_left.stl)
+![](../models/joint_left.stl)
+
+#### (1) [Right Joint](../models/joint_right.stl)
+![](../models/joint_right.stl)
+
+#### (3) [Screw](../models/screw.stl)
+![](../models/screw.stl)
+
+#### (optional) [8mm hex driver](../models/screwdriver.stl)
+![](../models/screwdriver.stl)
