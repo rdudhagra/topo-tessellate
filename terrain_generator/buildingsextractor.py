@@ -25,12 +25,15 @@ from terrain_generator.buildingsprocessor import BuildingsProcessor
 # Import the new console output system
 from .console import output
 
+
 class BuildingsExtractor:
     """Extracts building data from OpenStreetMap using the Overpass API, with default height support."""
 
     OVERPASS_URL = "https://overpass-api.de/api/interpreter"
     CACHE_DIR = "building_cache"
     DEFAULT_HEIGHT = 5.0  # Default height in meters for buildings without height data
+    MAX_RETRIES = 5
+    RETRY_DELAY_SECONDS = 5
 
     # Building types we want to include (major structures)
     MAJOR_BUILDING_TYPES = {
@@ -463,21 +466,33 @@ out geom;"""
                 self.stats = defaultdict(int, stats)
                 return buildings
 
-        # Build and execute query
+        # Build and execute query with retry logic
         query = self.build_overpass_query(bounds)
+        
+        response = None
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                with output.progress_context(f"Fetching building data from OpenStreetMap (attempt {attempt}/{self.MAX_RETRIES})"):
+                    response = requests.post(
+                        self.OVERPASS_URL,
+                        data=query,
+                        timeout=self.timeout,
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    )
+                    response.raise_for_status()
+                    break  # Success, exit retry loop
 
-        try:
-            with output.progress_context("Fetching building data from OpenStreetMap"):
-                response = requests.post(
-                    self.OVERPASS_URL,
-                    data=query,
-                    timeout=self.timeout,
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
-                response.raise_for_status()
+            except requests.RequestException as e:
+                if attempt < self.MAX_RETRIES:
+                    output.warning(f"Overpass API request failed (attempt {attempt}/{self.MAX_RETRIES}): {e}")
+                    output.info(f"Retrying in {self.RETRY_DELAY_SECONDS} seconds...")
+                    time.sleep(self.RETRY_DELAY_SECONDS)
+                else:
+                    output.error(f"Error fetching data from Overpass API after {self.MAX_RETRIES} attempts: {e}")
+                    return []
 
-        except requests.RequestException as e:
-            output.error(f"Error fetching data from Overpass API: {e}")
+        if response is None:
+            output.error("Failed to get response from Overpass API")
             return []
 
         try:
