@@ -29,7 +29,7 @@ from .console import output
 class BuildingsExtractor:
     """Extracts building data from OpenStreetMap using the Overpass API, with default height support."""
 
-    OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+    OVERPASS_URL = "https://overpass.private.coffee/api/interpreter"
     CACHE_DIR = "building_cache"
     DEFAULT_HEIGHT = 5.0  # Default height in meters for buildings without height data
     MAX_RETRIES = 5
@@ -320,7 +320,7 @@ class BuildingsExtractor:
 
         # Query for all buildings (no height requirement)
         # For relations, we need to fetch member ways separately to construct geometry
-        query = f"""[out:json][timeout:{self.timeout}];
+        query = f"""[out:json][timeout:{self.timeout}][maxsize:1073741824];
 (
   way["building"]({min_lat},{min_lon},{max_lat},{max_lon});
   relation["building"]["type"="multipolygon"]({min_lat},{min_lon},{max_lat},{max_lon});
