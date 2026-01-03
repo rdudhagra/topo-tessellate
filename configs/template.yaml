@@ -24,6 +24,7 @@
 #
 # base:                     # OPTIONAL. Base generation parameters (when tiling is enabled).
 #   height: 20.0            # [mm] Height of the base prism. Use 20mm for tiled configs, 10mm for non-tiled.
+#   cleat_cutout: true      # Whether to cut a cleat slot in the bottom of the base. Default true.
 #
 # bounds:                   # REQUIRED. Geographic bounding box in [min_lon, min_lat, max_lon, max_lat] (degrees).
 #   - -77.0728342158        #   min_lon (west). Negative for western hemisphere. Example: -77.07

@@ -280,15 +280,18 @@ Controls the solid base under your terrain.
 ```yaml
 base:
   height: 20.0
+  cleat_cutout: true
 ```
 
 | Parameter | Description |
 |-----------|-------------|
 | `height` | Thickness of the base in millimeters. |
+| `cleat_cutout` | Whether to cut a cleat slot in the bottom of the base. Default `true`. |
 
 **When to adjust:**
-- Use at least `20.0` mm for tiled models (provides enough material for assembly hardware)
-- If you want the base to be thinner, be sure to disable the cleat cutout
+- Use at least `20.0` mm for `height` when `cleat_cutout` is enabled (provides enough material for the slot)
+- Use at least `20.0` mm for `height` when tiling is enabled (provides enough material for the dovetail joints)
+- Set `cleat_cutout: false` if you want a thinner base or don't need the mounting slot
 
 ---
 

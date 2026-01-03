@@ -200,6 +200,9 @@ def _generate_base_for_tile(
         cutout_front = tile_row > 0  # Not top row
         cutout_back = tile_row < total_rows - 1  # Not bottom row
         
+        # Get cleat cutout setting (default True)
+        cutout_cleat = base_cfg.get("cleat_cutout", True)
+        
         # Generate base with appropriate cutouts
         base_gen = BaseGenerator()
         base_mesh = base_gen.generate_base_with_cutouts(
@@ -210,6 +213,7 @@ def _generate_base_for_tile(
             cutout_right=cutout_right,
             cutout_front=cutout_front,
             cutout_back=cutout_back,
+            cutout_cleat=cutout_cleat,
         )
         
         return base_mesh
